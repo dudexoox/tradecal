@@ -27,3 +27,7 @@ Thumbs.db
 
 # Vercel
 .vercel/
+
+# Env files — secrets stay local; keep the documented example
+.env*
+!.env.example
