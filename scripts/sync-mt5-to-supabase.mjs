@@ -112,7 +112,7 @@ const db = new Client({ connectionString: TARGET, ssl: { rejectUnauthorized: fal
 await db.connect();
 
 const { rows: accounts } = await db.query(
-  `select id, name, mt5_login, mt5_server, mt5_investor_password from accounts where mt5_enabled and mt5_login is not null`,
+  `select id, name, user_id, mt5_login, mt5_server, mt5_investor_password from accounts where mt5_enabled and mt5_login is not null`,
 );
 if (accounts.length === 0) console.log("no MT5-enabled accounts on Supabase");
 
@@ -135,15 +135,17 @@ for (const acc of accounts) {
       const params = [r.symbol, r.direction, r.entryPrice, r.exitPrice, r.size, r.pnl, r.fees, r.openedAt, r.closedAt, "mt5", r.externalId];
       const id = mine.get(r.externalId);
       if (id) {
+        // user_id is refreshed too, so rows written before the first signup
+        // claim are adopted by the owning account's user.
         await db.query(
-          `update trades set symbol=$1,direction=$2,entry_price=$3,exit_price=$4,size=$5,pnl=$6,fees=$7,opened_at=$8,closed_at=$9,source=$10,external_id=$11 where id=$12`,
-          [...params, id],
+          `update trades set symbol=$1,direction=$2,entry_price=$3,exit_price=$4,size=$5,pnl=$6,fees=$7,opened_at=$8,closed_at=$9,source=$10,external_id=$11,user_id=$13 where id=$12`,
+          [...params, id, acc.user_id],
         );
         updated++;
       } else {
         await db.query(
-          `insert into trades (symbol,direction,entry_price,exit_price,size,pnl,fees,opened_at,closed_at,source,external_id,account_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-          [...params, acc.id],
+          `insert into trades (symbol,direction,entry_price,exit_price,size,pnl,fees,opened_at,closed_at,source,external_id,account_id,user_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          [...params, acc.id, acc.user_id],
         );
         imported++;
       }

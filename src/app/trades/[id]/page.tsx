@@ -8,18 +8,21 @@ import { PageTitle, Pnl, Rating, SidePill } from "@/components/ui";
 import { SymbolLogo } from "@/components/symbol-logo";
 import { Figure, Placeholder, TradingViewCard } from "@/components/trade-media";
 import { getAccountById, getDistinctSetups, getDistinctSymbols, getTradeById } from "@/lib/data";
+import { requireUser } from "@/lib/auth";
 import { dayKey, fmtDateTime, fmtDuration, fmtMoney, fmtNum, fmtPrice, toLocalInput } from "@/lib/format";
 import { db } from "@/db";
 import { strategies } from "@/db/schema";
+import { eq } from "drizzle-orm";
 
 export const dynamic="force-dynamic";
 
 export default async function TradePage({params,searchParams}:{params:Promise<{id:string}>;searchParams:Promise<{edit?:string}>}) {
   const [{id:raw},{edit}]=await Promise.all([params,searchParams]);
   const id=Number(raw);if(!Number.isInteger(id)) notFound();
+  const userId=await requireUser();
   const trade=await getTradeById(id);if(!trade) notFound();
   const account=await getAccountById(trade.accountId);if(!account) notFound();
-  const allStrategies=await db.select({id:strategies.id,name:strategies.name,criteria:strategies.entryCriteria}).from(strategies).orderBy(strategies.name);
+  const allStrategies=await db.select({id:strategies.id,name:strategies.name,criteria:strategies.entryCriteria}).from(strategies).where(eq(strategies.userId,userId)).orderBy(strategies.name);
   const strategyOptions=allStrategies.map((s)=>({id:s.id,name:s.name,criteria:s.criteria.split("\n").filter(Boolean)}));
   const strategyName=trade.strategyId?(allStrategies.find((s)=>s.id===trade.strategyId)?.name??null):null;
   if(edit) {

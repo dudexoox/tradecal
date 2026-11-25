@@ -10,6 +10,7 @@ import {
   text,
   timestamp,
   uniqueIndex,
+  uuid,
 } from "drizzle-orm/pg-core";
 
 export const ACCOUNT_PHASES = ["challenge", "verification", "funded", "personal"] as const;
@@ -21,30 +22,36 @@ export type TradeDirection = (typeof TRADE_DIRECTIONS)[number];
 export const MOODS = ["calm", "focused", "confident", "anxious", "frustrated", "tired"] as const;
 export type Mood = (typeof MOODS)[number];
 
-export const accounts = pgTable("accounts", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  phase: text("phase").$type<AccountPhase>().notNull().default("challenge"),
-  currency: text("currency").notNull().default("USD"),
-  startingBalance: numeric("starting_balance", { precision: 14, scale: 2, mode: "number" }).notNull(),
-  profitTargetPct: numeric("profit_target_pct", { precision: 5, scale: 2, mode: "number" }).notNull().default(10),
-  maxDailyLossPct: numeric("max_daily_loss_pct", { precision: 5, scale: 2, mode: "number" }).notNull().default(5),
-  maxLossPct: numeric("max_loss_pct", { precision: 5, scale: 2, mode: "number" }).notNull().default(10),
-  /* MetaTrader 5 automatic tracking (investor / read-only access) */
-  mt5Enabled: boolean("mt5_enabled").notNull().default(false),
-  mt5Login: text("mt5_login"),
-  mt5Server: text("mt5_server"),
-  /** Read-only investor password. Never sent to the browser. */
-  mt5InvestorPassword: text("mt5_investor_password"),
-  /** Cached id of the connected API server (MetaApi) so we don't provision it twice. */
-  mt5ApiAccountId: text("mt5_api_account_id"),
-  mt5Mode: text("mt5_mode").$type<"live" | "demo">(),
-  mt5Status: text("mt5_status").$type<"idle" | "connected" | "error">().notNull().default("idle"),
-  mt5LastError: text("mt5_last_error"),
-  mt5LastSyncAt: timestamp("mt5_last_sync_at", { withTimezone: true }),
-  mt5LastImported: integer("mt5_last_imported").notNull().default(0),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const accounts = pgTable(
+  "accounts",
+  {
+    id: serial("id").primaryKey(),
+    /** Owning Supabase Auth user. NULL only until the first account claims migrated data. */
+    userId: uuid("user_id"),
+    name: text("name").notNull(),
+    phase: text("phase").$type<AccountPhase>().notNull().default("challenge"),
+    currency: text("currency").notNull().default("USD"),
+    startingBalance: numeric("starting_balance", { precision: 14, scale: 2, mode: "number" }).notNull(),
+    profitTargetPct: numeric("profit_target_pct", { precision: 5, scale: 2, mode: "number" }).notNull().default(10),
+    maxDailyLossPct: numeric("max_daily_loss_pct", { precision: 5, scale: 2, mode: "number" }).notNull().default(5),
+    maxLossPct: numeric("max_loss_pct", { precision: 5, scale: 2, mode: "number" }).notNull().default(10),
+    /* MetaTrader 5 automatic tracking (investor / read-only access) */
+    mt5Enabled: boolean("mt5_enabled").notNull().default(false),
+    mt5Login: text("mt5_login"),
+    mt5Server: text("mt5_server"),
+    /** Read-only investor password. Never sent to the browser. */
+    mt5InvestorPassword: text("mt5_investor_password"),
+    /** Cached id of the connected API server (MetaApi) so we don't provision it twice. */
+    mt5ApiAccountId: text("mt5_api_account_id"),
+    mt5Mode: text("mt5_mode").$type<"live" | "demo">(),
+    mt5Status: text("mt5_status").$type<"idle" | "connected" | "error">().notNull().default("idle"),
+    mt5LastError: text("mt5_last_error"),
+    mt5LastSyncAt: timestamp("mt5_last_sync_at", { withTimezone: true }),
+    mt5LastImported: integer("mt5_last_imported").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("accounts_user_idx").on(t.userId)],
+);
 
 export const trades = pgTable(
   "trades",
@@ -53,6 +60,8 @@ export const trades = pgTable(
     accountId: integer("account_id")
       .notNull()
       .references(() => accounts.id, { onDelete: "cascade" }),
+    /** Owning Supabase Auth user — mirrors accounts.user_id for direct scoping. */
+    userId: uuid("user_id"),
     symbol: text("symbol").notNull(),
     direction: text("direction").$type<TradeDirection>().notNull(),
     entryPrice: numeric("entry_price", { precision: 18, scale: 5, mode: "number" }),
@@ -81,6 +90,7 @@ export const trades = pgTable(
   },
   (t) => [
     index("trades_account_idx").on(t.accountId),
+    index("trades_user_idx").on(t.userId),
     index("trades_opened_at_idx").on(t.openedAt),
     index("trades_strategy_idx").on(t.strategyId),
     uniqueIndex("trades_account_external_uq").on(t.accountId, t.externalId),
@@ -89,13 +99,19 @@ export const trades = pgTable(
 
 /* --------------------------------- playbook --------------------------------- */
 
-export const playbooks = pgTable("playbooks", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  description: text("description"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const playbooks = pgTable(
+  "playbooks",
+  {
+    id: serial("id").primaryKey(),
+    /** Owning Supabase Auth user. NULL only until the first account claims migrated data. */
+    userId: uuid("user_id"),
+    name: text("name").notNull(),
+    description: text("description"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("playbooks_user_idx").on(t.userId)],
+);
 
 export const STRATEGY_STATUSES = ["active", "testing", "archived"] as const;
 export type StrategyStatus = (typeof STRATEGY_STATUSES)[number];
@@ -110,52 +126,68 @@ export type StrategyDirection = (typeof STRATEGY_DIRECTIONS)[number];
  * One reusable strategy inside the playbook. Criteria lists are stored as
  * newline-delimited text: one checkable item per line.
  */
-export const strategies = pgTable("strategies", {
-  id: serial("id").primaryKey(),
-  playbookId: integer("playbook_id").references(() => playbooks.id, { onDelete: "set null" }),
-  name: text("name").notNull(),
-  market: text("market").$type<StrategyMarket>().notNull().default("FX"),
-  timeframe: text("timeframe"),
-  session: text("session"),
-  direction: text("direction").$type<StrategyDirection>().notNull().default("both"),
-  status: text("status").$type<StrategyStatus>().notNull().default("testing"),
-  rating: integer("rating"),
-  risk: text("risk"),
-  /** Describe the strategy in your own words. */
-  description: text("description"),
-  /** Explain how it has worked in practice. */
-  howItWorks: text("how_it_works"),
-  /** Where exactly the trade is taken. */
-  entryWhere: text("entry_where"),
-  /** Why that location is worth entering. */
-  entryWhy: text("entry_why"),
-  /** Checklist: conditions that must be true before entering. */
-  entryCriteria: text("entry_criteria").notNull().default(""),
-  /** Checklist: reasons to skip the trade. */
-  avoidCriteria: text("avoid_criteria").notNull().default(""),
-  /** Which criteria the strategy deliberately ignores, and why. */
-  skipReasons: text("skip_reasons"),
-  /** What proves the idea wrong (stop / invalidation). */
-  invalidation: text("invalidation"),
-  /** Take-profit plan. */
-  target: text("target"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const strategies = pgTable(
+  "strategies",
+  {
+    id: serial("id").primaryKey(),
+    /** Owning Supabase Auth user. NULL only until the first account claims migrated data. */
+    userId: uuid("user_id"),
+    playbookId: integer("playbook_id").references(() => playbooks.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    market: text("market").$type<StrategyMarket>().notNull().default("FX"),
+    timeframe: text("timeframe"),
+    session: text("session"),
+    direction: text("direction").$type<StrategyDirection>().notNull().default("both"),
+    status: text("status").$type<StrategyStatus>().notNull().default("testing"),
+    rating: integer("rating"),
+    risk: text("risk"),
+    /** Describe the strategy in your own words. */
+    description: text("description"),
+    /** Explain how it has worked in practice. */
+    howItWorks: text("how_it_works"),
+    /** Where exactly the trade is taken. */
+    entryWhere: text("entry_where"),
+    /** Why that location is worth entering. */
+    entryWhy: text("entry_why"),
+    /** Checklist: conditions that must be true before entering. */
+    entryCriteria: text("entry_criteria").notNull().default(""),
+    /** Checklist: reasons to skip the trade. */
+    avoidCriteria: text("avoid_criteria").notNull().default(""),
+    /** Which criteria the strategy deliberately ignores, and why. */
+    skipReasons: text("skip_reasons"),
+    /** What proves the idea wrong (stop / invalidation). */
+    invalidation: text("invalidation"),
+    /** Take-profit plan. */
+    target: text("target"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("strategies_user_idx").on(t.userId)],
+);
 
 export type Playbook = typeof playbooks.$inferSelect;
 export type NewPlaybook = typeof playbooks.$inferInsert;
 export type Strategy = typeof strategies.$inferSelect;
 export type NewStrategy = typeof strategies.$inferInsert;
 
-export const journalEntries = pgTable("journal_entries", {
-  id: serial("id").primaryKey(),
-  entryDate: date("entry_date").notNull().unique(),
-  mood: text("mood").$type<Mood>(),
-  content: text("content").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const journalEntries = pgTable(
+  "journal_entries",
+  {
+    id: serial("id").primaryKey(),
+    /** Owning Supabase Auth user. NULL only until the first account claims migrated data. */
+    userId: uuid("user_id"),
+    entryDate: date("entry_date").notNull(),
+    mood: text("mood").$type<Mood>(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("journal_entries_user_idx").on(t.userId),
+    // One entry per day per user (was globally unique before multi-user).
+    uniqueIndex("journal_entries_user_date_uq").on(t.userId, t.entryDate),
+  ],
+);
 
 export const accountsRelations = relations(accounts, ({ many }) => ({
   trades: many(trades),

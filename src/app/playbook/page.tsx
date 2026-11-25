@@ -8,8 +8,9 @@ import { Icon } from "@/components/icons";
 import { db } from "@/db";
 import { playbooks, strategies, trades, type StrategyStatus } from "@/db/schema";
 import { ensureSeeded } from "@/lib/seed";
+import { requireUser } from "@/lib/auth";
 import { fmtMoney, fmtPct } from "@/lib/format";
-import { asc, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -23,12 +24,13 @@ const STATUS_LABEL: Record<StrategyStatus, string> = { active: "Active", testing
 type Search = { new?: string; playbook?: string; editStrategy?: string; editPlaybook?: string };
 
 export default async function PlaybookPage({ searchParams }: { searchParams: Promise<Search> }) {
-  await ensureSeeded();
+  const userId = await requireUser();
+  await ensureSeeded(userId);
   const sp = await searchParams;
 
   const [allPlaybooks, allStrategies] = await Promise.all([
-    db.select().from(playbooks).orderBy(asc(playbooks.createdAt), asc(playbooks.id)),
-    db.select().from(strategies).orderBy(asc(strategies.createdAt), asc(strategies.id)),
+    db.select().from(playbooks).where(eq(playbooks.userId, userId)).orderBy(asc(playbooks.createdAt), asc(playbooks.id)),
+    db.select().from(strategies).where(eq(strategies.userId, userId)).orderBy(asc(strategies.createdAt), asc(strategies.id)),
   ]);
 
   const ids = allStrategies.map((s) => s.id);
@@ -43,7 +45,7 @@ export default async function PlaybookPage({ searchParams }: { searchParams: Pro
             wins: sql<number>`count(*) filter (where ${trades.pnl} > 0)::int`,
           })
           .from(trades)
-          .where(inArray(trades.strategyId, ids))
+          .where(and(inArray(trades.strategyId, ids), eq(trades.userId, userId)))
           .groupBy(trades.strategyId);
   const byStrategy = new Map(agg.map((a) => [a.strategyId, a]));
 

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getActiveAccount } from "@/lib/data";
+import { signOut } from "@/app/auth-actions";
 import { NavLinks, Breadcrumb } from "./nav-links";
 import { AccountSwitcher } from "./account-switcher";
 import { MobileNavToggle, SidebarCollapseButton } from "./nav-controls";
@@ -60,6 +61,12 @@ export async function Header() {
             <span className="hidden h-5 w-px bg-line xl:block"/>
             <AccountSwitcher accounts={accounts} activeId={account?.id ?? null} />
             <Link href="/accounts" aria-label="Manage workspace accounts" className="hidden h-8 w-8 items-center justify-center rounded-full border border-brand/15 bg-brand/6 text-[11px] font-semibold text-brand sm:flex">J</Link>
+            <form action={signOut}>
+              <button type="submit" aria-label="Sign out" title="Sign out"
+                className="icon-button hover:text-down">
+                <Icon name="logout" size={16}/>
+              </button>
+            </form>
           </div>
         </div>
 

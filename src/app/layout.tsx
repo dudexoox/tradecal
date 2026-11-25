@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Header } from "@/components/header";
+import { getUser } from "@/lib/auth";
 import "./globals.css";
 
 /** Runs before first paint so a persisted collapsed sidebar has no layout flash.
@@ -13,16 +14,24 @@ export const metadata: Metadata = {
   description: "tradeVSL — log your trades, review your sessions, and understand your edge.",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const user = await getUser();
   return (
     <html lang="en">
       <body className="min-h-screen">
         {/* restores a collapsed sidebar before first paint — no layout flash */}
         <script dangerouslySetInnerHTML={{ __html: SIDEBAR_BOOT_SCRIPT }} />
-        <Header />
-        <main className="workspace-main">
-          <div className="workspace-inner">{children}</div>
-        </main>
+        {user ? (
+          <>
+            <Header />
+            <main className="workspace-main">
+              <div className="workspace-inner">{children}</div>
+            </main>
+          </>
+        ) : (
+          /* Auth pages render their own centered layout — no app shell. */
+          <>{children}</>
+        )}
       </body>
     </html>
   );

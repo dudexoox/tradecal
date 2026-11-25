@@ -13,10 +13,11 @@ import {
   type TradeDirection,
 } from "@/db/schema";
 import { ACCOUNT_COOKIE, getActiveAccount, getAccountSecrets } from "@/lib/data";
+import { requireUser } from "@/lib/auth";
 import { syncAccount } from "@/lib/mt5";
 import { normalizeChartLink, removeUpload, saveUpload } from "@/lib/uploads";
 import { parseTradeCsv, type CsvTrade } from "@/lib/csv";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -45,6 +46,13 @@ function dateTime(fd: FormData, key: string): Date | null {
 /* ----------------------------- active account ----------------------------- */
 
 export async function setActiveAccount(accountId: number) {
+  const userId = await requireUser();
+  const [owned] = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)))
+    .limit(1);
+  if (!owned) return;
   const store = await cookies();
   store.set(ACCOUNT_COOKIE, String(accountId), { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
   revalidatePath("/", "layout");
@@ -142,31 +150,40 @@ async function parseTrade(fd: FormData): Promise<{ data?: ParsedTrade; error?: s
 }
 
 export async function createTrade(_prev: FormState, fd: FormData): Promise<FormState> {
+  const userId = await requireUser();
   const parsed = await parseTrade(fd);
   if (!parsed.data) return { error: parsed.error };
 
   const accountIdRaw = Number(str(fd, "accountId"));
   const { account } = await getActiveAccount();
-  const accountId = Number.isFinite(accountIdRaw) && accountIdRaw > 0 ? accountIdRaw : account?.id;
-  if (!accountId) return { error: "Create an account before logging trades." };
+  const chosenId = Number.isFinite(accountIdRaw) && accountIdRaw > 0 ? accountIdRaw : account?.id;
+  if (!chosenId) return { error: "Create an account before logging trades." };
+  // Only the owner's accounts can receive trades.
+  const [owned] = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(and(eq(accounts.id, chosenId), eq(accounts.userId, userId)))
+    .limit(1);
+  if (!owned) return { error: "Account not found." };
 
-  await db.insert(trades).values({ ...parsed.data, accountId });
+  await db.insert(trades).values({ ...parsed.data, accountId: owned.id, userId });
   revalidatePath("/", "layout");
   redirect("/trades");
 }
 
 export async function updateTrade(id: number, _prev: FormState, fd: FormData): Promise<FormState> {
+  const userId = await requireUser();
   const [previous] = await db
     .select({ chartImageUrl: trades.chartImageUrl, setupImageUrl: trades.setupImageUrl })
     .from(trades)
-    .where(eq(trades.id, id))
+    .where(and(eq(trades.id, id), eq(trades.userId, userId)))
     .limit(1);
   if (!previous) return { error: "Trade not found." };
 
   const parsed = await parseTrade(fd);
   if (!parsed.data) return { error: parsed.error };
 
-  await db.update(trades).set(parsed.data).where(eq(trades.id, id));
+  await db.update(trades).set(parsed.data).where(and(eq(trades.id, id), eq(trades.userId, userId)));
 
   // Tidy up files that were replaced or removed.
   for (const old of [previous.chartImageUrl, previous.setupImageUrl]) {
@@ -177,16 +194,19 @@ export async function updateTrade(id: number, _prev: FormState, fd: FormData): P
 }
 
 export async function deleteTrade(id: number) {
+  const userId = await requireUser();
   const [previous] = await db
     .select({ chartImageUrl: trades.chartImageUrl, setupImageUrl: trades.setupImageUrl })
     .from(trades)
-    .where(eq(trades.id, id))
+    .where(and(eq(trades.id, id), eq(trades.userId, userId)))
     .limit(1);
-  await db.delete(trades).where(eq(trades.id, id));
-  if (previous) {
-    void removeUpload(previous.chartImageUrl);
-    void removeUpload(previous.setupImageUrl);
+  if (!previous) {
+    revalidatePath("/", "layout");
+    redirect("/trades");
   }
+  await db.delete(trades).where(and(eq(trades.id, id), eq(trades.userId, userId)));
+  void removeUpload(previous.chartImageUrl);
+  void removeUpload(previous.setupImageUrl);
   revalidatePath("/", "layout");
   redirect("/trades");
 }
@@ -194,6 +214,7 @@ export async function deleteTrade(id: number) {
 /* --------------------------------- journal -------------------------------- */
 
 export async function saveJournalEntry(_prev: FormState, fd: FormData): Promise<FormState> {
+  const userId = await requireUser();
   const entryDate = str(fd, "entryDate");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(entryDate)) return { error: "Pick a valid date." };
   const content = str(fd, "content");
@@ -203,9 +224,9 @@ export async function saveJournalEntry(_prev: FormState, fd: FormData): Promise<
 
   await db
     .insert(journalEntries)
-    .values({ entryDate, content, mood })
+    .values({ userId, entryDate, content, mood })
     .onConflictDoUpdate({
-      target: journalEntries.entryDate,
+      target: [journalEntries.userId, journalEntries.entryDate],
       set: { content, mood, updatedAt: new Date() },
     });
   revalidatePath("/", "layout");
@@ -214,7 +235,10 @@ export async function saveJournalEntry(_prev: FormState, fd: FormData): Promise<
 }
 
 export async function deleteJournalEntry(id: number) {
-  await db.delete(journalEntries).where(eq(journalEntries.id, id));
+  const userId = await requireUser();
+  await db
+    .delete(journalEntries)
+    .where(and(eq(journalEntries.id, id), eq(journalEntries.userId, userId)));
   revalidatePath("/", "layout");
 }
 
@@ -279,6 +303,7 @@ function parseAccount(fd: FormData, opts: { requireMt5Password: boolean }): { da
 }
 
 export async function createAccount(_prev: FormState, fd: FormData): Promise<FormState> {
+  const userId = await requireUser();
   const parsed = parseAccount(fd, { requireMt5Password: false });
   if (!parsed.data) return { error: parsed.error };
 
@@ -305,12 +330,14 @@ export async function createAccount(_prev: FormState, fd: FormData): Promise<For
     csvRows = result.rows;
   }
 
-  const [row] = await db.insert(accounts).values(parsed.data).returning();
+  const [row] = await db.insert(accounts).values({ ...parsed.data, userId }).returning();
   const store = await cookies();
   store.set(ACCOUNT_COOKIE, String(row.id), { path: "/", maxAge: 60 * 60 * 24 * 365, sameSite: "lax" });
 
   if (method === "csv") {
-    await db.insert(trades).values(csvRows.map((t) => ({ ...t, accountId: row.id, source: "csv" as const })));
+    await db
+      .insert(trades)
+      .values(csvRows.map((t) => ({ ...t, accountId: row.id, userId, source: "csv" as const })));
     revalidatePath("/", "layout");
     redirect(`/accounts?added=${csvRows.length}&via=csv`);
   }
@@ -327,8 +354,10 @@ export async function createAccount(_prev: FormState, fd: FormData): Promise<For
 }
 
 export async function updateAccount(id: number, _prev: FormState, fd: FormData): Promise<FormState> {
+  const userId = await requireUser();
   const parsed = parseAccount(fd, { requireMt5Password: false });
   if (!parsed.data) return { error: parsed.error };
+  // Ownership-checked lookup: someone else's account is "not found".
   const previous = await getAccountSecrets(id);
   if (!previous) return { error: "Account not found." };
 
@@ -350,7 +379,7 @@ export async function updateAccount(id: number, _prev: FormState, fd: FormData):
     set.mt5LastError = null;
   }
 
-  await db.update(accounts).set(set).where(eq(accounts.id, id));
+  await db.update(accounts).set(set).where(and(eq(accounts.id, id), eq(accounts.userId, userId)));
   revalidatePath("/", "layout");
   redirect("/accounts");
 }
@@ -374,7 +403,8 @@ export async function syncMt5Account(accountId: number, _prev: SyncState, _fd: F
 }
 
 export async function deleteAccount(id: number) {
-  await db.delete(accounts).where(eq(accounts.id, id));
+  const userId = await requireUser();
+  await db.delete(accounts).where(and(eq(accounts.id, id), eq(accounts.userId, userId)));
   const store = await cookies();
   if (store.get(ACCOUNT_COOKIE)?.value === String(id)) store.delete(ACCOUNT_COOKIE);
   revalidatePath("/", "layout");

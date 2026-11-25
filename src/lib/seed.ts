@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { accounts, journalEntries, playbooks, strategies, trades, type NewPlaybook, type NewStrategy, type NewTrade } from "@/db/schema";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 type Template = {
   daysAgo: number;
@@ -183,135 +183,157 @@ const DEMO_STRATEGIES: NewStrategy[] = [
   },
 ];
 
-export async function ensureSeeded() {
+export async function ensureSeeded(userId: string) {
   if (seededOnce) return;
   await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(727374)`);
 
-    /* The playbook is created (or re-read) before anything else, so a database
-       seeded before this feature existed gains its strategies and links too. */
-    const existingPlaybook = await tx.select({ id: playbooks.id }).from(playbooks).limit(1);
-    let strategyIds: Record<string, number> = {};
-    if (existingPlaybook.length === 0) {
+    /* Demo data only ever appears on a completely fresh install (no accounts
+       at all). On an existing journal — including after the first signup
+       claims the migrated rows — new users start with an empty workspace. */
+    const [{ totalAccounts }] = await tx
+      .select({ totalAccounts: sql<number>`count(*)::int` })
+      .from(accounts);
+
+    if (totalAccounts === 0) {
       const [pb] = await tx
         .insert(playbooks)
-        .values(DEMO_PLAYBOOK)
+        .values({ ...DEMO_PLAYBOOK, userId })
         .returning({ id: playbooks.id });
       const created = await tx
         .insert(strategies)
-        .values(DEMO_STRATEGIES.map((s) => ({ ...s, playbookId: pb.id })))
+        .values(DEMO_STRATEGIES.map((s) => ({ ...s, playbookId: pb.id, userId })))
         .returning({ id: strategies.id, name: strategies.name });
-      strategyIds = Object.fromEntries(created.map((s) => [s.name, s.id]));
-    } else {
-      const all = await tx.select({ id: strategies.id, name: strategies.name }).from(strategies);
-      strategyIds = Object.fromEntries(all.map((s) => [s.name, s.id]));
-    }
+      const strategyIds: Record<string, number> = Object.fromEntries(created.map((s) => [s.name, s.id]));
 
-    const [{ count }] = await tx.select({ count: sql<number>`count(*)::int` }).from(accounts);
-    if (count > 0) {
-      // Backfill strategy links for a journal seeded before the playbook existed.
-      if (Object.keys(strategyIds).length > 0) {
-        await tx.execute(sql`
-          update trades set strategy_id = case
-            when setup = 'Breakout' then (select id from strategies where name = 'Asian Range Breakout')
-            when setup = 'Reversal' then (select id from strategies where name = case when symbol like 'US%' then 'New York Reversal' else 'Liquidity Sweep Reversal' end)
-            when setup = 'Range' then (select id from strategies where name = 'New York Reversal')
-            else strategy_id end
-          where strategy_id is null
-        `);
-      }
+      const [account] = await tx
+        .insert(accounts)
+        .values({
+          userId,
+          name: "FTMO Challenge 100K",
+          phase: "challenge",
+          currency: "USD",
+          startingBalance: 100000,
+          profitTargetPct: 10,
+          maxDailyLossPct: 5,
+          maxLossPct: 10,
+        })
+        .returning();
+
+      await insertDemoJournal(tx, account.id, strategyIds, userId);
       seededOnce = true;
       return;
     }
 
-    const [account] = await tx
-      .insert(accounts)
-      .values({
-        name: "FTMO Challenge 100K",
-        phase: "challenge",
-        currency: "USD",
-        startingBalance: 100000,
-        profitTargetPct: 10,
-        maxDailyLossPct: 5,
-        maxLossPct: 10,
-      })
-      .returning();
-
-    const strategyFor = (symbol: string, setup: string): number | null => {
-      if (setup === "Breakout") return strategyIds["Asian Range Breakout"] ?? null;
-      if (setup === "Reversal")
-        return symbol.startsWith("US")
-          ? (strategyIds["New York Reversal"] ?? null)
-          : (strategyIds["Liquidity Sweep Reversal"] ?? null);
-      if (setup === "Range") return strategyIds["New York Reversal"] ?? null;
-      return null;
-    };
-
-    const rows: NewTrade[] = TEMPLATES.map((t) => {
-      const openedAt = at(tradingDay(t.daysAgo), t.open);
-      const closedAt = new Date(openedAt.getTime() + t.durMin * 60000);
-      return {
-        accountId: account.id,
-        symbol: t.symbol,
-        direction: t.direction,
-        entryPrice: t.entry,
-        exitPrice: t.exit,
-        size: t.size,
-        pnl: t.pnl,
-        fees: t.fees,
-        openedAt,
-        closedAt,
-        setup: t.setup,
-        rating: t.rating,
-        notes: t.notes ?? null,
-        strategyId: strategyFor(t.symbol, t.setup),
-      };
-    });
-    const inserted = await tx.insert(trades).values(rows).returning({ id: trades.id });
-    // Demo chart / setup artwork so the media section is visible on first run.
-    const artwork: Record<number, Partial<NewTrade>> = {
-      0: { chartImageUrl: "/seed/chart-1.svg" },
-      2: { chartImageUrl: "/seed/chart-2.svg", setupImageUrl: "/seed/setup-1.svg" },
-      6: { tradingviewUrl: "https://www.tradingview.com/chart/" },
-      10: { chartImageUrl: "/seed/chart-1.svg", setupImageUrl: "/seed/setup-1.svg" },
-    };
-    for (const [index, patch] of Object.entries(artwork)) {
-      const row = inserted[Number(index)];
-      if (row) await tx.update(trades).set(patch).where(sql`${trades.id} = ${row.id}`);
+    /* Existing journal: the first signup already claimed the playbook and its
+       strategies, so backfill this user's unlinked legacy trades — and only
+       theirs. New users own no strategies, so this is a no-op for them. */
+    const userStrategies = await tx
+      .select({ id: strategies.id, name: strategies.name })
+      .from(strategies)
+      .where(eq(strategies.userId, userId));
+    if (userStrategies.length > 0) {
+      await tx.execute(sql`
+        update trades set strategy_id = case
+          when setup = 'Breakout' then (select id from strategies where name = 'Asian Range Breakout' and user_id = ${userId})
+          when setup = 'Reversal' then (select id from strategies where name = case when symbol like 'US%' then 'New York Reversal' else 'Liquidity Sweep Reversal' end and user_id = ${userId})
+          when setup = 'Range' then (select id from strategies where name = 'New York Reversal' and user_id = ${userId})
+          else strategy_id end
+        where strategy_id is null and user_id = ${userId}
+      `);
     }
-
-    const iso = (d: Date) =>
-      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
-    await tx
-      .insert(journalEntries)
-      .values([
-        {
-          entryDate: iso(tradingDay(23)),
-          mood: "frustrated",
-          content:
-            "Hit my daily loss limit fighting the NQ trend into the close. The first loss was fine, the second one was ego. New rule: after two consecutive losses, shut the platform for the day.",
-        },
-        {
-          entryDate: iso(tradingDay(13)),
-          mood: "anxious",
-          content:
-            "Broke the no-news rule and traded gold into CPI. Spread blew out and I was stopped before the move even developed. Not a strategy problem – a discipline problem.",
-        },
-        {
-          entryDate: iso(tradingDay(3)),
-          mood: "focused",
-          content:
-            "Best session in weeks. Waited for the retest instead of chasing, sized according to plan, and let the trade work. This is what the process is supposed to feel like.",
-        },
-        {
-          entryDate: iso(tradingDay(1)),
-          mood: "calm",
-          content:
-            "Only one setup today and it was the right one. Halfway to the profit target with plenty of room under the drawdown limits. Keep sizing flat – no need to push.",
-        },
-      ])
-      .onConflictDoNothing();
+    seededOnce = true;
   });
   seededOnce = true;
 }
+
+/** Demo trades + journal entries for a brand-new install, owned by `userId`. */
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+async function insertDemoJournal(
+  tx: Tx,
+  accountId: number,
+  strategyIds: Record<string, number>,
+  userId: string,
+) {
+  const strategyFor = (symbol: string, setup: string): number | null => {
+    if (setup === "Breakout") return strategyIds["Asian Range Breakout"] ?? null;
+    if (setup === "Reversal")
+      return symbol.startsWith("US")
+        ? (strategyIds["New York Reversal"] ?? null)
+        : (strategyIds["Liquidity Sweep Reversal"] ?? null);
+    if (setup === "Range") return strategyIds["New York Reversal"] ?? null;
+    return null;
+  };
+
+  const rows: NewTrade[] = TEMPLATES.map((t) => {
+    const openedAt = at(tradingDay(t.daysAgo), t.open);
+    const closedAt = new Date(openedAt.getTime() + t.durMin * 60000);
+    return {
+      accountId,
+      userId,
+      symbol: t.symbol,
+      direction: t.direction,
+      entryPrice: t.entry,
+      exitPrice: t.exit,
+      size: t.size,
+      pnl: t.pnl,
+      fees: t.fees,
+      openedAt,
+      closedAt,
+      setup: t.setup,
+      rating: t.rating,
+      notes: t.notes ?? null,
+      strategyId: strategyFor(t.symbol, t.setup),
+    };
+  });
+  const inserted = await tx.insert(trades).values(rows).returning({ id: trades.id });
+  // Demo chart / setup artwork so the media section is visible on first run.
+  const artwork: Record<number, Partial<NewTrade>> = {
+    0: { chartImageUrl: "/seed/chart-1.svg" },
+    2: { chartImageUrl: "/seed/chart-2.svg", setupImageUrl: "/seed/setup-1.svg" },
+    6: { tradingviewUrl: "https://www.tradingview.com/chart/" },
+    10: { chartImageUrl: "/seed/chart-1.svg", setupImageUrl: "/seed/setup-1.svg" },
+  };
+  for (const [index, patch] of Object.entries(artwork)) {
+    const row = inserted[Number(index)];
+    if (row) await tx.update(trades).set(patch).where(sql`${trades.id} = ${row.id}`);
+  }
+
+  const iso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  await tx
+    .insert(journalEntries)
+    .values([
+      {
+        userId,
+        entryDate: iso(tradingDay(23)),
+        mood: "frustrated",
+        content:
+          "Hit my daily loss limit fighting the NQ trend into the close. The first loss was fine, the second one was ego. New rule: after two consecutive losses, shut the platform for the day.",
+      },
+      {
+        userId,
+        entryDate: iso(tradingDay(13)),
+        mood: "anxious",
+        content:
+          "Broke the no-news rule and traded gold into CPI. Spread blew out and I was stopped before the move even developed. Not a strategy problem – a discipline problem.",
+      },
+      {
+        userId,
+        entryDate: iso(tradingDay(3)),
+        mood: "focused",
+        content:
+          "Best session in weeks. Waited for the retest instead of chasing, sized according to plan, and let the trade work. This is what the process is supposed to feel like.",
+      },
+      {
+        userId,
+        entryDate: iso(tradingDay(1)),
+        mood: "calm",
+        content:
+          "Only one setup today and it was the right one. Halfway to the profit target with plenty of room under the drawdown limits. Keep sizing flat – no need to push.",
+      },
+    ])
+    .onConflictDoNothing();
+}
+

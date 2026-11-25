@@ -309,7 +309,8 @@ async function fetchLocalHistory(account: Account): Promise<ImportedTrade[]> {
 
 /* --------------------------------------------------------------- upsert */
 
-async function upsertTrades(accountId: number, rows: ImportedTrade[]) {
+async function upsertTrades(account: Account, rows: ImportedTrade[]) {
+  const accountId = account.id;
   // Drop any leftover demo rows now that real broker history is available.
   await db.delete(trades).where(and(eq(trades.accountId, accountId), like(trades.externalId, "demo:%")));
 
@@ -341,7 +342,8 @@ async function upsertTrades(accountId: number, rows: ImportedTrade[]) {
       await db.update(trades).set(data).where(eq(trades.id, id));
       updated++;
     } else {
-      await db.insert(trades).values({ ...data, accountId });
+      // Mirrors the owning account so every trade stays scoped to its user.
+      await db.insert(trades).values({ ...data, accountId, userId: account.userId });
       imported++;
     }
   }
@@ -374,7 +376,7 @@ export async function syncAccount(account: Account): Promise<SyncSummary> {
 
   try {
     const rows = await fetchLocalHistory(account);
-    const { imported, updated } = await upsertTrades(account.id, rows);
+    const { imported, updated } = await upsertTrades(account, rows);
     await db
       .update(accounts)
       .set({ mt5Mode: mode, mt5Status: "connected", mt5LastError: null, mt5LastSyncAt: new Date(), mt5LastImported: imported })

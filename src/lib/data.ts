@@ -2,6 +2,7 @@ import { db } from "@/db";
 import { accounts, journalEntries, trades, type Account, type PublicAccount, type Trade } from "@/db/schema";
 import { and, asc, desc, eq, gt, ilike, lt, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
+import { requireUser } from "./auth";
 import { ensureSeeded } from "./seed";
 import { syncAccount } from "./mt5";
 
@@ -16,8 +17,13 @@ function toPublicAccount(account: Account): PublicAccount {
 }
 
 export async function getAccounts(): Promise<PublicAccount[]> {
-  await ensureSeeded();
-  const rows = await db.select().from(accounts).orderBy(asc(accounts.createdAt), asc(accounts.id));
+  const userId = await requireUser();
+  await ensureSeeded(userId);
+  const rows = await db
+    .select()
+    .from(accounts)
+    .where(eq(accounts.userId, userId))
+    .orderBy(asc(accounts.createdAt), asc(accounts.id));
   return rows.map(toPublicAccount);
 }
 
@@ -31,9 +37,14 @@ export async function getActiveAccount(): Promise<{ account: PublicAccount | nul
   return { account, accounts: all };
 }
 
-/** Full row including credentials — server code only, never a component prop. */
+/** Full row including credentials — server code only, never a component prop. Ownership-checked. */
 export async function getAccountSecrets(id: number): Promise<Account | null> {
-  const [row] = await db.select().from(accounts).where(eq(accounts.id, id)).limit(1);
+  const userId = await requireUser();
+  const [row] = await db
+    .select()
+    .from(accounts)
+    .where(and(eq(accounts.id, id), eq(accounts.userId, userId)))
+    .limit(1);
   return row ?? null;
 }
 
@@ -63,7 +74,8 @@ export type TradeFilters = {
 };
 
 export async function getTrades(accountId: number, filters: TradeFilters = {}): Promise<Trade[]> {
-  const conds = [eq(trades.accountId, accountId)];
+  const userId = await requireUser();
+  const conds = [eq(trades.accountId, accountId), eq(trades.userId, userId)];
   if (filters.symbol) conds.push(ilike(trades.symbol, `%${filters.symbol}%`));
   if (filters.direction) conds.push(eq(trades.direction, filters.direction));
   if (filters.setup) conds.push(eq(trades.setup, filters.setup));
@@ -81,42 +93,65 @@ export async function getTrades(accountId: number, filters: TradeFilters = {}): 
     .orderBy(desc(sql`coalesce(${trades.closedAt}, ${trades.openedAt})`), desc(trades.id));
 }
 
-/** Credential-free lookup, safe for server pages and client props. */
+/** Credential-free lookup, safe for server pages and client props. Ownership-checked. */
 export async function getAccountById(id: number): Promise<PublicAccount | null> {
-  const [row] = await db.select().from(accounts).where(eq(accounts.id, id)).limit(1);
+  const userId = await requireUser();
+  const [row] = await db
+    .select()
+    .from(accounts)
+    .where(and(eq(accounts.id, id), eq(accounts.userId, userId)))
+    .limit(1);
   return row ? toPublicAccount(row) : null;
 }
 
+/** Ownership-checked: other users' trades are indistinguishable from missing ones. */
 export async function getTradeById(id: number): Promise<Trade | null> {
-  const [row] = await db.select().from(trades).where(eq(trades.id, id)).limit(1);
+  const userId = await requireUser();
+  const [row] = await db
+    .select()
+    .from(trades)
+    .where(and(eq(trades.id, id), eq(trades.userId, userId)))
+    .limit(1);
   return row ?? null;
 }
 
 export async function getDistinctSetups(accountId: number): Promise<string[]> {
+  const userId = await requireUser();
   const rows = await db
     .selectDistinct({ setup: trades.setup })
     .from(trades)
-    .where(eq(trades.accountId, accountId))
+    .where(and(eq(trades.accountId, accountId), eq(trades.userId, userId)))
     .orderBy(asc(trades.setup));
   return rows.map((r) => r.setup).filter((s): s is string => Boolean(s && s.trim()));
 }
 
 export async function getDistinctSymbols(accountId: number): Promise<string[]> {
+  const userId = await requireUser();
   const rows = await db
     .selectDistinct({ symbol: trades.symbol })
     .from(trades)
-    .where(eq(trades.accountId, accountId))
+    .where(and(eq(trades.accountId, accountId), eq(trades.userId, userId)))
     .orderBy(asc(trades.symbol));
   return rows.map((r) => r.symbol);
 }
 
 export async function getJournalEntries() {
-  await ensureSeeded();
-  return db.select().from(journalEntries).orderBy(desc(journalEntries.entryDate));
+  const userId = await requireUser();
+  await ensureSeeded(userId);
+  return db
+    .select()
+    .from(journalEntries)
+    .where(eq(journalEntries.userId, userId))
+    .orderBy(desc(journalEntries.entryDate));
 }
 
 export async function getJournalEntryByDate(entryDate: string) {
-  const [row] = await db.select().from(journalEntries).where(eq(journalEntries.entryDate, entryDate)).limit(1);
+  const userId = await requireUser();
+  const [row] = await db
+    .select()
+    .from(journalEntries)
+    .where(and(eq(journalEntries.entryDate, entryDate), eq(journalEntries.userId, userId)))
+    .limit(1);
   return row ?? null;
 }
 
@@ -128,6 +163,7 @@ export type AccountSummary = {
 };
 
 export async function getAccountSummaries(): Promise<AccountSummary[]> {
+  const userId = await requireUser();
   const all = await getAccounts();
   const agg = await db
     .select({
@@ -137,6 +173,7 @@ export async function getAccountSummaries(): Promise<AccountSummary[]> {
       synced: sql<number>`count(*) filter (where ${trades.source} = 'mt5')::int`,
     })
     .from(trades)
+    .where(eq(trades.userId, userId))
     .groupBy(trades.accountId);
   const map = new Map(agg.map((a) => [a.accountId, a]));
   return all.map((account) => ({

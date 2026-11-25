@@ -28,6 +28,7 @@ const paths = {
   settings: <><path d="m10 3-1 3-3 1-3 3 2 2-1 3 3 3 3-1 2 2 3-1 3-3-1-3 2-2-3-3-3-1-1-3h-2Z"/><circle cx="11.5" cy="11.5" r="3"/></>,
   smile: <><circle cx="12" cy="12" r="9"/><path d="M8 14.5a4.5 4.5 0 0 0 8 0M8.5 9h.1M15.5 9h.1"/></>,
   clock: <><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/></>,
+  logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></>,
 } as const;
 
 export type IconName = keyof typeof paths;

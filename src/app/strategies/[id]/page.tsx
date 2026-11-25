@@ -9,8 +9,9 @@ import { Icon } from "@/components/icons";
 import { db } from "@/db";
 import { playbooks, strategies, trades, type StrategyStatus } from "@/db/schema";
 import { getActiveAccount } from "@/lib/data";
+import { requireUser } from "@/lib/auth";
 import { fmtDate, fmtMoney, fmtPct, fmtSignedMoney } from "@/lib/format";
-import { asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -40,17 +41,26 @@ export default async function StrategyPage({ params }: { params: Promise<{ id: s
   const { id: raw } = await params;
   const id = Number(raw);
   if (!Number.isInteger(id)) notFound();
+  const userId = await requireUser();
 
-  const [strategy] = await db.select().from(strategies).where(eq(strategies.id, id)).limit(1);
+  const [strategy] = await db
+    .select()
+    .from(strategies)
+    .where(and(eq(strategies.id, id), eq(strategies.userId, userId)))
+    .limit(1);
   if (!strategy) notFound();
 
   const [playbook] = strategy.playbookId
-    ? await db.select().from(playbooks).where(eq(playbooks.id, strategy.playbookId)).limit(1)
+    ? await db
+        .select()
+        .from(playbooks)
+        .where(and(eq(playbooks.id, strategy.playbookId), eq(playbooks.userId, userId)))
+        .limit(1)
     : [];
   const linked = await db
     .select()
     .from(trades)
-    .where(eq(trades.strategyId, id))
+    .where(and(eq(trades.strategyId, id), eq(trades.userId, userId)))
     .orderBy(desc(sql`coalesce(${trades.closedAt}, ${trades.openedAt})`), desc(trades.id));
   const { account } = await getActiveAccount();
   const currency = account?.currency ?? "USD";

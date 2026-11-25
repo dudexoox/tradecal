@@ -6,19 +6,23 @@ import { Icon } from "@/components/icons";
 import { db } from "@/db";
 import { strategies } from "@/db/schema";
 import { getActiveAccount, getDistinctSetups, getDistinctSymbols } from "@/lib/data";
+import { requireUser } from "@/lib/auth";
 import { toLocalInput } from "@/lib/format";
+import { eq } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
 const lines = (text: string) => text.split("\n").map((s) => s.trim()).filter(Boolean);
 
 export default async function NewTradePage() {
+  const userId = await requireUser();
   const { account } = await getActiveAccount();
   if (!account) return <Empty title="Start with an account" body="Give your trades a home before logging the first one." action={{ href: "/accounts?new=1", label: "Add account" }} />;
   const [setups, symbols, strategyRows] = await Promise.all([
     getDistinctSetups(account.id),
     getDistinctSymbols(account.id),
-    db.select({ id: strategies.id, name: strategies.name, criteria: strategies.entryCriteria }).from(strategies).orderBy(strategies.name),
+    db.select({ id: strategies.id, name: strategies.name, criteria: strategies.entryCriteria })
+      .from(strategies).where(eq(strategies.userId, userId)).orderBy(strategies.name),
   ]);
   const strategyOptions: StrategyOption[] = strategyRows.map((s) => ({ id: s.id, name: s.name, criteria: lines(s.criteria) }));
   const now = new Date();now.setSeconds(0,0);
