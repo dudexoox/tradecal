@@ -136,9 +136,12 @@ for (const acc of accounts) {
       const id = mine.get(r.externalId);
       if (id) {
         // user_id is refreshed too, so rows written before the first signup
-        // claim are adopted by the owning account's user.
+        // claim are adopted by the owning account's user. Never overwrite an
+        // already-owned row with NULL: if the claim commits while this sync is
+        // in flight, the stale read must not un-claim it (it would self-heal
+        // only after the next run).
         await db.query(
-          `update trades set symbol=$1,direction=$2,entry_price=$3,exit_price=$4,size=$5,pnl=$6,fees=$7,opened_at=$8,closed_at=$9,source=$10,external_id=$11,user_id=$13 where id=$12`,
+          `update trades set symbol=$1,direction=$2,entry_price=$3,exit_price=$4,size=$5,pnl=$6,fees=$7,opened_at=$8,closed_at=$9,source=$10,external_id=$11,user_id=case when $13::uuid is not null then $13 else user_id end where id=$12`,
           [...params, id, acc.user_id],
         );
         updated++;
