@@ -7,11 +7,11 @@ import "./globals.css";
 /** Runs before first paint so a persisted collapsed sidebar has no layout flash.
  *  Lives here (not in a "use client" module) — client-module exports arrive as
  *  references, not strings, when imported into a server component. */
-const SIDEBAR_BOOT_SCRIPT = `try{if(localStorage.getItem("tvsl:side")==="collapsed")document.documentElement.setAttribute("data-side","collapsed")}catch(e){}`;
+const SIDEBAR_BOOT_SCRIPT = `try{if(localStorage.getItem("tradecal:side")==="collapsed")document.documentElement.setAttribute("data-side","collapsed")}catch(e){}`;
 
 export const metadata: Metadata = {
-  title: "tradeVSL — Find your trading edge",
-  description: "tradeVSL — log your trades, review your sessions, and understand your edge.",
+  title: "tradeCal — Find your trading edge",
+  description: "tradeCal — log your trades, review your sessions, and understand your edge.",
 };
 
 export default async function RootLayout({ children }: { children: ReactNode }) {

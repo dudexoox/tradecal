@@ -7,7 +7,7 @@ import { getUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = { title: "Sign in — tradeVSL" };
+export const metadata: Metadata = { title: "Sign in — tradeCal" };
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
   const user = await getUser();

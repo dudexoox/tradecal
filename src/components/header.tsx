@@ -8,11 +8,11 @@ import { Icon } from "./icons";
 
 export function Logo({ collapsed = false }: { collapsed?: boolean }) {
   return (
-    <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="tradeVSL home">
+    <Link href="/" className="flex shrink-0 items-center gap-2.5" aria-label="tradeCal home">
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px] bg-brand text-white shadow-[0_3px_8px_#0781fe25]">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 4.5h12a1 1 0 0 1 1 1v14H7a3 3 0 0 1-3-3v-10a2 2 0 0 1 2-2Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"/><path d="M8 4.5v15M10.5 14l2.5-3 2 1 2-4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>
       </span>
-      <span className={`text-[25px] font-bold tracking-[-1.1px] text-fg ${collapsed ? "side-detail" : ""}`}>trade<span className="text-brand">VSL</span></span>
+      <span className={`text-[25px] font-bold tracking-[-1.1px] text-fg ${collapsed ? "side-detail" : ""}`}>trade<span className="text-brand">Cal</span></span>
     </Link>
   );
 }

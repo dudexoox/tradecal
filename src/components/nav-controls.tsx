@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { Icon } from "./icons";
 
-const SIDE_KEY = "tvsl:side";
+const SIDE_KEY = "tradecal:side";
 
 /** Shell state lives on <html data-*>; ARIA on the buttons mirrors it so every
  *  close path (X, backdrop, Esc, navigation) stays consistent. */
