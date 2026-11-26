@@ -44,7 +44,7 @@ function weekLabel(week: Week) {
   return `${fmtDateShort(week.dates[0])} – ${fmtDateShort(week.dates[6])}`;
 }
 
-export function MonthCalendar({ month, days, currency, entryDates = [], period }: { month: Date; days: DayPnl[]; currency: string; entryDates?: string[]; period?: string }) {
+export function MonthCalendar({ month, days, currency, entryDates = [], period, monthBasePath = "/" }: { month: Date; days: DayPnl[]; currency: string; entryDates?: string[]; period?: string; monthBasePath?: string }) {
   const map = new Map(days.map((d) => [d.key, d]));
   const notes = new Set(entryDates);
   const year = month.getFullYear(), mon = month.getMonth();
@@ -68,7 +68,7 @@ export function MonthCalendar({ month, days, currency, entryDates = [], period }
   const avgWeek = weeks.length ? weeks.reduce((a, w) => a + w.total, 0) / weeks.length : 0;
   const weekTotals = weeks.reduce((a, w) => a + w.total, 0);
 
-  const href = (d: Date) => `/?m=${monthParam(d)}${period ? `&period=${encodeURIComponent(period)}` : ""}`;
+  const href = (d: Date) => `${monthBasePath}?m=${monthParam(d)}${period ? `&period=${encodeURIComponent(period)}` : ""}`;
   const title = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(month);
 
   return <section className="card min-w-0 p-5">
