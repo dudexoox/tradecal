@@ -97,6 +97,42 @@ export const trades = pgTable(
   ],
 );
 
+/* ------------------------------ chart candles ------------------------------ */
+
+export const CHART_TIMEFRAMES = ["M5", "M15", "H1", "H4", "D1"] as const;
+export type ChartTimeframe = (typeof CHART_TIMEFRAMES)[number];
+
+/**
+ * OHLC bars around one trade, pulled from the broker by the desktop sync so
+ * every trade page can render a chart pinned to the moment of entry.
+ * `time` is the candle open time in unix seconds, stored in the same instant
+ * space as trades.openedAt so markers line up in any timezone.
+ */
+export const chartCandles = pgTable(
+  "chart_candles",
+  {
+    id: serial("id").primaryKey(),
+    tradeId: integer("trade_id")
+      .notNull()
+      .references(() => trades.id, { onDelete: "cascade" }),
+    /** Owning Supabase Auth user — mirrors trades.user_id for direct scoping. */
+    userId: uuid("user_id"),
+    symbol: text("symbol").notNull(),
+    timeframe: text("timeframe").$type<ChartTimeframe>().notNull(),
+    /** Candle open time (unix seconds). */
+    time: integer("time").notNull(),
+    open: numeric("open", { precision: 18, scale: 5, mode: "number" }).notNull(),
+    high: numeric("high", { precision: 18, scale: 5, mode: "number" }).notNull(),
+    low: numeric("low", { precision: 18, scale: 5, mode: "number" }).notNull(),
+    close: numeric("close", { precision: 18, scale: 5, mode: "number" }).notNull(),
+  },
+  (t) => [
+    index("chart_candles_trade_idx").on(t.tradeId),
+    index("chart_candles_user_idx").on(t.userId),
+    uniqueIndex("chart_candles_trade_tf_time_uq").on(t.tradeId, t.timeframe, t.time),
+  ],
+);
+
 /* --------------------------------- playbook --------------------------------- */
 
 export const playbooks = pgTable(
@@ -203,5 +239,6 @@ export type NewAccount = typeof accounts.$inferInsert;
 export type PublicAccount = Omit<Account, "mt5InvestorPassword"> & { hasMt5Password: boolean };
 export type Trade = typeof trades.$inferSelect;
 export type NewTrade = typeof trades.$inferInsert;
+export type ChartCandle = typeof chartCandles.$inferSelect;
 export type JournalEntry = typeof journalEntries.$inferSelect;
 export type NewJournalEntry = typeof journalEntries.$inferInsert;

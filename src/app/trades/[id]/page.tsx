@@ -7,6 +7,7 @@ import { Icon } from "@/components/icons";
 import { PageTitle, Pnl, Rating, SidePill } from "@/components/ui";
 import { SymbolLogo } from "@/components/symbol-logo";
 import { Figure, Placeholder, TradingViewCard } from "@/components/trade-media";
+import { TradeChart } from "@/components/trade-chart";
 import { getAccountById, getDistinctSetups, getDistinctSymbols, getTradeById } from "@/lib/data";
 import { requireUser } from "@/lib/auth";
 import { dayKey, fmtDateTime, fmtDuration, fmtMoney, fmtNum, fmtPrice, toLocalInput } from "@/lib/format";
@@ -37,6 +38,7 @@ export default async function TradePage({params,searchParams}:{params:Promise<{i
     <PageTitle title={<span className="flex items-center gap-3"><SymbolLogo symbol={trade.symbol} size={40}/>{trade.symbol}</span>} subtitle={<span className="flex flex-wrap items-center gap-2"><SidePill side={trade.direction}/><span>{fmtDateTime(trade.openedAt)} UTC</span><span className="text-line-2">·</span><span>{account.name}</span></span>} action={<div className="flex gap-2"><DeleteButton action={deleteTrade.bind(null,id)} confirmText={`Delete this ${trade.symbol} trade? This cannot be undone.`}/><Link href={`/trades/${id}?edit=1`} className="btn-primary"><Icon name="pen" size={14}/>Edit & review</Link></div>}/>
     <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_280px]">
       <div className="space-y-5"><section className="card overflow-hidden"><div className="flex items-end justify-between gap-5 p-6"><div><p className="text-xs text-muted">Net P&L</p><div className="mt-2 text-[34px] font-semibold tracking-[-1.2px]"><Pnl value={trade.pnl} currency={account.currency}/></div></div><div className="pb-2 text-right"><p className="mb-2 text-[10px] text-muted">Execution rating</p><Rating value={trade.rating}/></div></div><dl className="grid grid-cols-2 gap-x-6 gap-y-6 border-t border-line bg-panel-2/30 p-6 sm:grid-cols-3">{facts.map((f)=><div key={f.label}><dt className="text-[10px] text-muted">{f.label}</dt><dd className="num mt-1.5 text-[13px] font-medium">{f.value}</dd></div>)}</dl></section>
+      <TradeChart trade={{ id: trade.id, symbol: trade.symbol, direction: trade.direction, openedAt: trade.openedAt.toISOString(), closedAt: trade.closedAt ? trade.closedAt.toISOString() : null, entryPrice: trade.entryPrice, exitPrice: trade.exitPrice }}/>
       <section className="card overflow-hidden"><div className="flex items-center justify-between gap-3 border-b border-line px-6 py-4"><div className="flex items-center gap-2.5"><Icon name="chart" size={17} className="text-brand"/><h2 className="text-sm font-semibold">Chart &amp; setup</h2></div><Link href={`/trades/${id}?edit=1`} className="text-link">{trade.chartImageUrl||trade.setupImageUrl||trade.tradingviewUrl?"Edit":"Add chart"}<Icon name="arrow" size={13}/></Link></div>
       <div className="grid gap-4 p-5 sm:grid-cols-2">
         {trade.chartImageUrl

@@ -7,6 +7,8 @@
  *
  * Reads MT5-enabled accounts from Supabase, uses each account's saved investor
  * password (or the bridge's DPAPI credentials), and upserts trades idempotently.
+ * It also pulls candle history around every trade (M5–D1) into chart_candles,
+ * which powers the pinned chart snapshot on each trade page.
  */
 import dotenv from "dotenv";
 import { spawn } from "node:child_process";
@@ -116,14 +118,19 @@ const { rows: accounts } = await db.query(
 );
 if (accounts.length === 0) console.log("no MT5-enabled accounts on Supabase");
 
+/** First working MT5 session of this run — reused for the chart bar requests. */
+let chartConnection = null;
+
 for (const acc of accounts) {
   try {
-    const res = await runBridge({
+    const connection = {
       action: "sync", login: acc.mt5_login, server: acc.mt5_server,
       terminal_path: terminal, portable: true,
       ...(acc.mt5_investor_password ? { password: acc.mt5_investor_password } : {}),
-    });
+    };
+    const res = await runBridge(connection);
     if (!res.ok) throw new Error(res.error || "bridge sync failed");
+    if (!chartConnection) chartConnection = { ...connection };
     const scale = (res.account?.currency ?? "USD").trim().toUpperCase() === "USC" ? 0.01 : 1;
     const rows = groupDeals(res, scale);
 
@@ -162,6 +169,156 @@ for (const acc of accounts) {
     await db.query(`update accounts set mt5_status='error', mt5_last_error=$1, mt5_last_sync_at=now() where id=$2`, [String(e.message).slice(0, 300), acc.id]);
     console.error(`${acc.name}: FAILED — ${e.message}`);
   }
+}
+
+/* ------------------------------ chart candles ------------------------------ */
+
+/**
+ * Context kept around a trade per timeframe, in milliseconds. `minSpan` pads
+ * very short trades so the chart never renders as a sliver.
+ */
+const CHART_TFS = [
+  { tf: "M5", before: 3 * 36e5, after: 6 * 36e5, minSpan: 8 * 36e5 },
+  { tf: "M15", before: 8 * 36e5, after: 16 * 36e5, minSpan: 32 * 36e5 },
+  { tf: "H1", before: 24 * 36e5, after: 48 * 36e5, minSpan: 96 * 36e5 },
+  { tf: "H4", before: 72 * 36e5, after: 120 * 36e5, minSpan: 288 * 36e5 },
+  { tf: "D1", before: 480 * 36e5, after: 240 * 36e5, minSpan: 960 * 36e5 },
+];
+
+/**
+ * MT5 bar times are epoch seconds whose UTC breakdown is the broker's wall
+ * clock, while trades are stored by parsing that same wall clock as local
+ * time. Pushing bars through the identical conversion keeps candles and entry
+ * markers in one instant space, so they line up in any timezone.
+ */
+const brokerInstant = (epochSeconds) => {
+  const d = new Date(epochSeconds * 1000);
+  const pad = (n) => String(n).padStart(2, "0");
+  return new Date(
+    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`,
+  );
+};
+
+/** Inverse of brokerInstant: an instant's local wall clock is the broker's. */
+const wallClock = (ms) => {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+};
+
+/** Journal symbol -> this broker's name when they differ (e.g. FTMO vs Vantage). */
+const SYMBOL_ALIASES = { US100: "NAS100", US500: "SP500" };
+
+function chartRange(openedMs, closedMs, spec) {
+  const open = openedMs;
+  // An open trade keeps accruing bars, so its window follows the clock.
+  const close = Math.max(closedMs ?? Date.now(), open);
+  let from = open - spec.before;
+  let to = close + spec.after;
+  if (to - from < spec.minSpan) {
+    const pad = (spec.minSpan - (to - from)) / 2;
+    from -= pad;
+    to += pad;
+  }
+  return { from: Math.floor(from / 1000), to: Math.ceil(to / 1000) };
+}
+
+async function syncCharts() {
+  if (!chartConnection) {
+    console.log("charts: skipped (no working MT5 connection this run)");
+    return;
+  }
+  const { rows: trades } = await db.query(
+    `select t.id, t.symbol, t.opened_at, t.closed_at, t.user_id from trades t order by t.id`,
+  );
+  if (trades.length === 0) {
+    console.log("charts: skipped (no trades)");
+    return;
+  }
+  const { rows: have } = await db.query(`select distinct trade_id, timeframe from chart_candles`);
+  const seen = new Set(have.map((r) => `${r.trade_id}:${r.timeframe}`));
+
+  const requests = [];
+  const windows = new Map();
+  for (const t of trades) {
+    const openedMs = new Date(t.opened_at).getTime();
+    const closedMs = t.closed_at ? new Date(t.closed_at).getTime() : null;
+    for (const spec of CHART_TFS) {
+      const key = `${t.id}:${spec.tf}`;
+      // Closed trades are immutable: only fetch what is missing. Open trades
+      // are re-fetched so their window keeps extending to the current bar.
+      if (closedMs !== null && seen.has(key)) continue;
+      const range = chartRange(openedMs, closedMs, spec);
+      windows.set(key, range);
+      requests.push({
+        key, symbol: SYMBOL_ALIASES[t.symbol] ?? t.symbol, timeframe: spec.tf,
+        from: wallClock(range.from * 1000), to: wallClock(range.to * 1000),
+      });
+    }
+  }
+  if (requests.length === 0) {
+    console.log("charts: up to date");
+    return;
+  }
+
+  const users = new Map(trades.map((t) => [t.id, t.user_id]));
+  let fetched = 0, stored = 0, failed = 0;
+  for (let i = 0; i < requests.length; i += 250) {
+    const chunk = requests.slice(i, i + 250);
+    const res = await runBridge({ ...chartConnection, action: "bars", requests: chunk });
+    if (!res.ok) throw new Error(res.error || "bridge bars failed");
+    for (const req of chunk) {
+      const result = res.results?.[req.key];
+      const tradeId = Number(req.key.split(":")[0]);
+      if (!result?.ok) {
+        failed++;
+        console.error(`  chart ${req.symbol} ${req.timeframe} (trade ${tradeId}): ${result?.error ?? "no result"}`);
+        continue;
+      }
+      const candles = result.candles ?? [];
+      if (candles.length === 0) continue;
+      const range = windows.get(req.key);
+      const userId = users.get(tradeId) ?? null;
+      // Upsert first and trim afterwards, so a symbol or time edit never
+      // leaves the chart empty while the sync is running.
+      for (let c = 0; c < candles.length; c += 500) {
+        const batch = candles.slice(c, c + 500);
+        const values = [];
+        const params = [];
+        batch.forEach((bar, j) => {
+          const b = j * 9;
+          values.push(`($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8},$${b + 9})`);
+          params.push(
+            tradeId, userId, result.symbol, req.timeframe,
+            Math.floor(brokerInstant(bar.time).getTime() / 1000),
+            bar.open, bar.high, bar.low, bar.close,
+          );
+        });
+        await db.query(
+          `insert into chart_candles (trade_id, user_id, symbol, timeframe, time, open, high, low, close)
+           values ${values.join(",")}
+           on conflict (trade_id, timeframe, time)
+           do update set symbol = excluded.symbol, open = excluded.open, high = excluded.high,
+                          low = excluded.low, close = excluded.close,
+                          user_id = coalesce(chart_candles.user_id, excluded.user_id)`,
+          params,
+        );
+      }
+      await db.query(
+        `delete from chart_candles where trade_id = $1 and timeframe = $2 and (time < $3 or time > $4)`,
+        [tradeId, req.timeframe, range.from, range.to],
+      );
+      fetched++;
+      stored += candles.length;
+    }
+  }
+  console.log(`charts: ${fetched} ranges stored, ${stored} candles${failed ? `, ${failed} failed` : ""}`);
+}
+
+try {
+  await syncCharts();
+} catch (e) {
+  console.error(`charts: FAILED — ${e.message}`);
 }
 
 await db.end();
