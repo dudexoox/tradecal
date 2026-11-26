@@ -9,7 +9,16 @@ import type {
   TvTimezone,
 } from "@/db/schema";
 import { Icon } from "./icons";
-import type { TradeChartTrade } from "./trade-chart";
+
+export type TradeChartTrade = {
+  id: number;
+  symbol: string;
+  direction: "long" | "short";
+  openedAt: string;
+  closedAt: string | null;
+  entryPrice: number | null;
+  exitPrice: number | null;
+};
 
 const WIDGET_SCRIPT = "https://widgets.tradingview-widget.com/w/en/tv-advanced-chart.js";
 const WIDGET_TAG = "tv-advanced-chart";
@@ -120,7 +129,7 @@ function applyWidgetAttributes(el: HTMLElement, symbol: string, settings: Settin
  * drawing tools, indicators and chart settings; we persist only the wrapper
  * options TradingView exposes as live attributes.
  */
-export function TradeAnalyze({ trade }: { trade: TradeChartTrade }) {
+export function TradeAnalyze({ trade, fullscreen = false }: { trade: TradeChartTrade; fullscreen?: boolean }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const widgetRef = useRef<HTMLElement | null>(null);
   const [scriptReady, setScriptReady] = useState(
@@ -247,10 +256,13 @@ export function TradeAnalyze({ trade }: { trade: TradeChartTrade }) {
   };
 
   return (
-    <div className="p-4">
+    <div className={fullscreen ? "flex h-full min-h-0 flex-col" : "p-4"}>
       <Script id="tv-advanced-chart-script" src={WIDGET_SCRIPT} strategy="afterInteractive" type="module" />
 
-      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-panel-2/40 p-2.5">
+      <div className={fullscreen
+        ? "flex flex-wrap items-center gap-2 border-b border-line bg-panel-2/60 px-4 py-2.5"
+        : "mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-panel-2/40 p-2.5"}
+      >
         <label className="flex items-center gap-1.5 text-[10px] font-medium text-muted">
           Interval
           <select
@@ -322,7 +334,10 @@ export function TradeAnalyze({ trade }: { trade: TradeChartTrade }) {
         </div>
       </div>
 
-      <div className="relative h-[600px] w-full rounded-lg border border-line bg-white">
+      <div className={fullscreen
+        ? "relative min-h-0 w-full flex-1 bg-white"
+        : "relative h-[600px] w-full rounded-lg border border-line bg-white"}
+      >
         <div ref={containerRef} className="absolute inset-0" />
         {!scriptReady && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
@@ -332,17 +347,21 @@ export function TradeAnalyze({ trade }: { trade: TradeChartTrade }) {
         )}
       </div>
 
-      <p className="mt-2.5 flex flex-wrap items-center justify-between gap-2 text-[10px] text-dim">
-        <span>
-          {trade.symbol} → {tvSymbol} · market data by TradingView
-        </span>
-        <span aria-live="polite">
-          {message ?? (dirty ? "Unsaved changes" : hasSaved ? "Setup saved to your account" : "Using defaults")}
-        </span>
-      </p>
-      <p className="mt-1 text-[10px] leading-relaxed text-dim">
-        Indicators and drawings are controlled inside the widget. Saved setup applies to every trade you open.
-      </p>
+      {!fullscreen && (
+        <>
+          <p className="mt-2.5 flex flex-wrap items-center justify-between gap-2 text-[10px] text-dim">
+            <span>
+              {trade.symbol} → {tvSymbol} · market data by TradingView
+            </span>
+            <span aria-live="polite">
+              {message ?? (dirty ? "Unsaved changes" : hasSaved ? "Setup saved to your account" : "Using defaults")}
+            </span>
+          </p>
+          <p className="mt-1 text-[10px] leading-relaxed text-dim">
+            Indicators and drawings are controlled inside the widget. Saved setup applies to every trade you open.
+          </p>
+        </>
+      )}
     </div>
   );
 }
