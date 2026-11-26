@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   IChartApi,
@@ -15,6 +16,16 @@ const TIMEFRAMES = ["M5", "M15", "H1", "H4", "D1"] as const;
 type Timeframe = (typeof TIMEFRAMES)[number];
 
 const BAR_SECONDS: Record<Timeframe, number> = { M5: 300, M15: 900, H1: 3600, H4: 14400, D1: 86400 };
+
+/** TradingView is loaded only when the Analyze tab is opened. */
+const TradeAnalyze = dynamic(() => import("./trade-analyze").then((mod) => mod.TradeAnalyze), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-[600px] items-center justify-center text-xs font-medium text-muted">
+      Loading analysis chart…
+    </div>
+  ),
+});
 
 /** App palette (see globals.css). */
 const UP = "#199b78";
@@ -74,6 +85,7 @@ export function TradeChart({ trade }: { trade: TradeChartTrade }) {
   const libRef = useRef<typeof import("lightweight-charts") | null>(null);
 
   const [ready, setReady] = useState(false);
+  const [tab, setTab] = useState<"snapshot" | "analyze">("snapshot");
   const [tf, setTf] = useState<Timeframe>(() => defaultTimeframe(trade));
   /** Last completed fetch; null until one lands (also covers tf switches). */
   const [fetched, setFetched] = useState<{ tf: Timeframe; candles: Candle[]; error: string | null } | null>(null);
@@ -260,72 +272,109 @@ export function TradeChart({ trade }: { trade: TradeChartTrade }) {
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-6 py-4">
         <div className="flex items-center gap-2.5">
           <Icon name="chart" size={17} className="text-brand" />
-          <h2 className="text-sm font-semibold">Chart snapshot</h2>
-          <span className="subtle-tag">Pinned to entry</span>
+          <h2 className="text-sm font-semibold">Trade chart</h2>
+          <span className="subtle-tag">{tab === "snapshot" ? "Pinned to entry" : "TradingView"}</span>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-0.5 rounded-lg border border-line bg-panel-2 p-1" role="group" aria-label="Chart timeframe">
-            {TIMEFRAMES.map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setTf(t)}
-                aria-pressed={t === tf}
-                className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
-                  t === tf ? "bg-white text-brand shadow-[0_1px_2px_rgba(24,36,59,0.08)]" : "text-muted hover:text-fg"
-                }`}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
+        <div className="flex items-center gap-0.5 rounded-lg border border-line bg-panel-2 p-1" role="tablist" aria-label="Chart mode">
           <button
             type="button"
-            onClick={savePng}
-            disabled={!candles?.length}
-            title="Save chart as PNG"
-            aria-label="Save chart as PNG"
-            className="icon-button disabled:opacity-40"
+            role="tab"
+            id="chart-tab-snapshot"
+            aria-controls="chart-panel-snapshot"
+            aria-selected={tab === "snapshot"}
+            onClick={() => setTab("snapshot")}
+            className={`rounded-md px-3 py-1 text-[11px] font-semibold transition-colors ${
+              tab === "snapshot" ? "bg-white text-brand shadow-[0_1px_2px_rgba(24,36,59,0.08)]" : "text-muted hover:text-fg"
+            }`}
           >
-            <Icon name="download" size={15} />
+            Snapshot
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="chart-tab-analyze"
+            aria-controls="chart-panel-analyze"
+            aria-selected={tab === "analyze"}
+            onClick={() => setTab("analyze")}
+            className={`rounded-md px-3 py-1 text-[11px] font-semibold transition-colors ${
+              tab === "analyze" ? "bg-white text-brand shadow-[0_1px_2px_rgba(24,36,59,0.08)]" : "text-muted hover:text-fg"
+            }`}
+          >
+            Analyze
           </button>
         </div>
       </div>
-      <div className="p-4">
-        <div className="relative h-[320px] w-full overflow-hidden rounded-lg border border-line bg-white">
-          <div ref={containerRef} className="absolute inset-0" />
-          {(loading || error || empty) && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white/95 px-6 text-center">
-              {loading ? (
-                <>
-                  <span className="h-5 w-5 animate-spin rounded-full border-2 border-line-2 border-t-brand" />
-                  <span className="text-xs font-medium text-muted">Loading {tf} candles…</span>
-                </>
-              ) : error ? (
-                <>
-                  <Icon name="info" size={22} className="text-dim" />
-                  <span className="text-xs font-medium text-muted">{error}</span>
-                  <span className="text-[10px] text-dim">Try again after the next MT5 sync.</span>
-                </>
-              ) : (
-                <>
-                  <Icon name="chart" size={22} className="text-dim" />
-                  <span className="text-xs font-medium text-muted">No {tf} data for this symbol yet</span>
-                  <span className="text-[10px] leading-relaxed text-dim">
-                    Candles arrive with the next MT5 sync from your terminal.
-                  </span>
-                </>
+
+      {tab === "snapshot" ? (
+        <div id="chart-panel-snapshot" role="tabpanel" aria-labelledby="chart-tab-snapshot">
+          <div className="flex flex-wrap items-center justify-end gap-2 border-b border-line px-4 py-3">
+            <div className="flex items-center gap-0.5 rounded-lg border border-line bg-panel-2 p-1" role="group" aria-label="Chart timeframe">
+              {TIMEFRAMES.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTf(t)}
+                  aria-pressed={t === tf}
+                  className={`rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors ${
+                    t === tf ? "bg-white text-brand shadow-[0_1px_2px_rgba(24,36,59,0.08)]" : "text-muted hover:text-fg"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={savePng}
+              disabled={!candles?.length}
+              title="Save chart as PNG"
+              aria-label="Save chart as PNG"
+              className="icon-button disabled:opacity-40"
+            >
+              <Icon name="download" size={15} />
+            </button>
+          </div>
+          <div className="p-4">
+            <div className="relative h-[320px] w-full overflow-hidden rounded-lg border border-line bg-white">
+              <div ref={containerRef} className="absolute inset-0" />
+              {(loading || error || empty) && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white/95 px-6 text-center">
+                  {loading ? (
+                    <>
+                      <span className="h-5 w-5 animate-spin rounded-full border-2 border-line-2 border-t-brand" />
+                      <span className="text-xs font-medium text-muted">Loading {tf} candles…</span>
+                    </>
+                  ) : error ? (
+                    <>
+                      <Icon name="info" size={22} className="text-dim" />
+                      <span className="text-xs font-medium text-muted">{error}</span>
+                      <span className="text-[10px] text-dim">Try again after the next MT5 sync.</span>
+                    </>
+                  ) : (
+                    <>
+                      <Icon name="chart" size={22} className="text-dim" />
+                      <span className="text-xs font-medium text-muted">No {tf} data for this symbol yet</span>
+                      <span className="text-[10px] leading-relaxed text-dim">
+                        Candles arrive with the next MT5 sync from your terminal.
+                      </span>
+                    </>
+                  )}
+                </div>
               )}
             </div>
-          )}
+            <p className="mt-2.5 flex flex-wrap items-center justify-between gap-2 text-[10px] text-dim">
+              <span>
+                {trade.symbol} · {tf} · broker history via MetaTrader 5
+              </span>
+              <span>Drag to pan · scroll to zoom</span>
+            </p>
+          </div>
         </div>
-        <p className="mt-2.5 flex flex-wrap items-center justify-between gap-2 text-[10px] text-dim">
-          <span>
-            {trade.symbol} · {tf} · broker history via MetaTrader 5
-          </span>
-          <span>Drag to pan · scroll to zoom</span>
-        </p>
-      </div>
+      ) : (
+        <div id="chart-panel-analyze" role="tabpanel" aria-labelledby="chart-tab-analyze">
+          <TradeAnalyze trade={trade} />
+        </div>
+      )}
     </section>
   );
 }

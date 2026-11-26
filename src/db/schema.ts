@@ -133,6 +133,35 @@ export const chartCandles = pgTable(
   ],
 );
 
+/* ---------------------------- chart preferences ---------------------------- */
+
+/** Interval values accepted by the TradingView Advanced Chart widget. */
+export const TV_INTERVALS = ["1", "3", "5", "15", "30", "60", "120", "180", "240", "D", "W"] as const;
+export type TvInterval = (typeof TV_INTERVALS)[number];
+export const TV_THEMES = ["light", "dark"] as const;
+export type TvTheme = (typeof TV_THEMES)[number];
+export const TV_CHART_TYPES = ["candles", "bars", "hollow-candles", "heikin-ashi", "line", "area"] as const;
+export type TvChartType = (typeof TV_CHART_TYPES)[number];
+export const TV_TIMEZONES = ["Etc/UTC", "exchange"] as const;
+export type TvTimezone = (typeof TV_TIMEZONES)[number];
+
+/**
+ * One chart setup per signed-in user, shared by every trade. TradingView's
+ * hosted widget owns drawings and indicator internals; these are the wrapper
+ * settings we can read back and restore.
+ */
+export const chartPreferences = pgTable("chart_preferences", {
+  userId: uuid("user_id").primaryKey(),
+  interval: text("interval").$type<TvInterval>().notNull().default("15"),
+  theme: text("theme").$type<TvTheme>().notNull().default("light"),
+  chartType: text("chart_type").$type<TvChartType>().notNull().default("candles"),
+  timezone: text("timezone").$type<TvTimezone>().notNull().default("Etc/UTC"),
+  showDrawingToolbar: boolean("show_drawing_toolbar").notNull().default(true),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type ChartPreferences = typeof chartPreferences.$inferSelect;
+
 /* --------------------------------- playbook --------------------------------- */
 
 export const playbooks = pgTable(
