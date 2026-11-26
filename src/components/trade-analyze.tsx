@@ -248,7 +248,7 @@ export function TradeAnalyze({ trade }: { trade: TradeChartTrade }) {
 
   return (
     <div className="p-4">
-      <Script id="tv-advanced-chart-script" src={WIDGET_SCRIPT} strategy="afterInteractive" />
+      <Script id="tv-advanced-chart-script" src={WIDGET_SCRIPT} strategy="afterInteractive" type="module" />
 
       <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-line bg-panel-2/40 p-2.5">
         <label className="flex items-center gap-1.5 text-[10px] font-medium text-muted">
