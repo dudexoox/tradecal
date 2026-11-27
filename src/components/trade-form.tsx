@@ -2,10 +2,12 @@
 
 import { useActionState, useId, useRef, useState } from "react";
 import Link from "next/link";
-import type { Trade } from "@/db/schema";
+import type { Trade, TradeTag } from "@/db/schema";
 import type { FormState } from "@/app/actions";
+import { fmtR } from "@/lib/format";
 import { Icon } from "./icons";
 import { CriteriaChecklist } from "./criteria-checklist";
+import { TagPicker } from "./tag-picker";
 
 // Kept local so this client bundle never imports the server-side upload module.
 const ACCEPT = "image/png,image/jpeg,image/webp";
@@ -13,7 +15,7 @@ const MAX_BYTES = 5 * 1024 * 1024;
 
 export type StrategyOption = { id: number; name: string; criteria: string[] };
 
-export function TradeForm({action,trade,accountId,setups,symbols,strategies,cancelHref,submitLabel,defaultTime="",openTime,closeTime}:{action:(prev:FormState,fd:FormData)=>Promise<FormState>;trade?:Trade;accountId:number;setups:string[];symbols:string[];strategies:StrategyOption[];cancelHref:string;submitLabel:string;defaultTime?:string;openTime?:string;closeTime?:string;}) {
+export function TradeForm({action,trade,accountId,setups,symbols,strategies,allTags,cancelHref,submitLabel,defaultTime="",openTime,closeTime}:{action:(prev:FormState,fd:FormData)=>Promise<FormState>;trade?:Trade&{tags?:TradeTag[]};accountId:number;setups:string[];symbols:string[];strategies:StrategyOption[];allTags:TradeTag[];cancelHref:string;submitLabel:string;defaultTime?:string;openTime?:string;closeTime?:string;}) {
   const [state,formAction,pending]=useActionState(action,null);
   const [direction,setDirection]=useState<"long"|"short">(trade?.direction??"long");
   const [rating,setRating]=useState(trade?.rating??0);
@@ -24,8 +26,24 @@ export function TradeForm({action,trade,accountId,setups,symbols,strategies,canc
   const [chartRemoved,setChartRemoved]=useState(false);
   const [setupRemoved,setSetupRemoved]=useState(false);
   const [mediaError,setMediaError]=useState<string|null>(null);
+  const [entry,setEntry]=useState(trade?.entryPrice!=null?String(trade.entryPrice):"");
+  const [stop,setStop]=useState(trade?.stopLoss!=null?String(trade.stopLoss):"");
+  const [target,setTarget]=useState(trade?.takeProfit!=null?String(trade.takeProfit):"");
+  const [exit,setExit]=useState(trade?.exitPrice!=null?String(trade.exitPrice):"");
+  const [risk,setRisk]=useState(trade?.riskAmount!=null?String(trade.riskAmount):"");
+  const [pnl,setPnl]=useState(trade?.pnl!=null?String(trade.pnl):"");
 
   const chosen=strategies.find((s)=>String(s.id)===strategyId);
+  const entryN=Number(entry),stopN=Number(stop),targetN=Number(target),exitN=Number(exit),riskN=Number(risk),pnlN=Number(pnl);
+  const pricesReady=entry.trim()!==""&&stop.trim()!==""&&Number.isFinite(entryN)&&Number.isFinite(stopN)&&Math.abs(entryN-stopN)>0;
+  const planned= pricesReady&&target.trim()!==""&&Number.isFinite(targetN) ? Math.abs(targetN-entryN)/Math.abs(entryN-stopN) : null;
+  const realized= risk.trim()!==""&&Number.isFinite(riskN)&&riskN>0&&pnl.trim()!==""&&Number.isFinite(pnlN)
+    ? pnlN/riskN
+    : pricesReady&&exit.trim()!==""&&Number.isFinite(exitN)
+      ? (direction==="long"?exitN-entryN:entryN-exitN)/Math.abs(entryN-stopN)
+      : null;
+  const stopWarning= pricesReady&&((direction==="long"&&stopN>=entryN)||(direction==="short"&&stopN<=entryN));
+  const targetWarning= pricesReady&&target.trim()!==""&&Number.isFinite(targetN)&&((direction==="long"&&targetN<=entryN)||(direction==="short"&&targetN>=entryN));
 
   const pickImage=(file:File|undefined,set:(url:string)=>void)=>{
     if(!file)return;
@@ -43,9 +61,27 @@ export function TradeForm({action,trade,accountId,setups,symbols,strategies,canc
       <div><span className="label">Direction</span><div className="grid h-11 grid-cols-2 gap-1 rounded-lg border border-line-2 bg-panel-2/60 p-1">{(["long","short"] as const).map((d)=><button key={d} type="button" aria-pressed={direction===d} onClick={()=>setDirection(d)} className={`flex items-center justify-center gap-1.5 rounded-md text-xs font-medium capitalize transition-colors ${direction===d?d==="long"?"bg-white text-up shadow-sm":"bg-white text-down shadow-sm":"text-muted hover:text-fg"}`}><Icon name="arrowUp" size={13} className={d==="short"?"rotate-90":""}/>{d}</button>)}</div></div>
       <div><label className="label" htmlFor="openedAt">Open time <span className="text-[10px] text-dim">(UTC)</span></label><input id="openedAt" name="openedAt" type="datetime-local" required defaultValue={trade?openTime:defaultTime} className="field"/></div>
       <div><label className="label" htmlFor="closedAt">Close time <span className="text-[10px] text-dim">(UTC, optional)</span></label><input id="closedAt" name="closedAt" type="datetime-local" defaultValue={trade?closeTime:defaultTime} className="field"/></div>
-      <div className="grid grid-cols-3 gap-3 sm:col-span-2"><NumberField name="entryPrice" label="Entry price" value={trade?.entryPrice} placeholder="1.0850"/><NumberField name="exitPrice" label="Exit price" value={trade?.exitPrice} placeholder="1.0890"/><NumberField name="size" label="Size (lots)" value={trade?.size} placeholder="1.00"/></div>
-      <NumberField name="pnl" label="Net P&L" value={trade?.pnl} placeholder="0.00" required/><NumberField name="fees" label="Fees / swap" value={trade?.fees} placeholder="0.00"/>
-      <p className="-mt-2 text-[10px] leading-relaxed text-muted sm:col-span-2">Enter the final net result in your account currency. Fees are recorded separately for reference, not subtracted again.</p>
+      <div className="grid grid-cols-2 gap-3 sm:col-span-2 sm:grid-cols-3">
+        <RiskField name="entryPrice" label="Entry price" value={entry} onChange={setEntry} placeholder="1.0850"/>
+        <RiskField name="stopLoss" label="Stop loss" value={stop} onChange={setStop} placeholder="1.0820" hint="Initial invalidation"/>
+        <RiskField name="takeProfit" label="Take profit" value={target} onChange={setTarget} placeholder="1.0920" hint="Planned target"/>
+        <RiskField name="exitPrice" label="Exit price" value={exit} onChange={setExit} placeholder="1.0890"/>
+        <NumberField name="size" label="Size (lots)" value={trade?.size} placeholder="1.00"/>
+        <RiskField name="riskAmount" label="Planned risk (1R)" value={risk} onChange={setRisk} placeholder="250.00" hint="In account currency"/>
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:col-span-2">
+        <RiskField name="pnl" label="Net P&L" value={pnl} onChange={setPnl} placeholder="0.00" required/>
+        <NumberField name="fees" label="Fees / swap" value={trade?.fees} placeholder="0.00"/>
+      </div>
+      <div className="rounded-lg border border-line bg-panel-2/50 px-4 py-3 sm:col-span-2">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-[11px]">
+          <span className="text-muted">Planned R:R <strong className="num ml-1 font-semibold text-fg">{planned!==null?`1 : ${planned.toFixed(2)}`:"—"}</strong></span>
+          <span className="text-muted">Result <strong className={`num ml-1 font-semibold ${realized===null?"text-fg":realized>0?"text-up":realized<0?"text-down":"text-fg"}`}>{fmtR(realized)}</strong></span>
+          <span className="text-muted">Stop &amp; target <strong className="ml-1 font-semibold text-fg">{pricesReady?"Set":"Not set"}</strong></span>
+        </div>
+        {(stopWarning||targetWarning)&&<p className="mt-2 text-[10px] text-down">For a {direction} trade, the stop should sit {direction==="long"?"below":"above"} entry and the target {direction==="long"?"above":"below"} it. Double-check the prices.</p>}
+        <p className="mt-2 text-[10px] leading-relaxed text-muted">Enter the final net result in your account currency. Planned risk is the amount you were willing to lose — it turns P&amp;L into R-multiples for your reports.</p>
+      </div>
     </div>
 
     {/* ------------------------------------------------ beyond the numbers */}
@@ -62,6 +98,7 @@ export function TradeForm({action,trade,accountId,setups,symbols,strategies,canc
         <div><label className="label" htmlFor="setup">Setup / strategy</label><input id="setup" name="setup" list="setups" defaultValue={trade?.setup??""} placeholder="e.g. Breakout, pullback..." autoComplete="off" className="field"/><datalist id="setups">{setups.map((s)=><option key={s} value={s}/>)}</datalist></div>
         <div><span className="label">How well did you execute?</span><div className="flex h-11 items-center gap-1.5">{[1,2,3,4,5].map((n)=><button key={n} type="button" aria-label={`${n} of 5`} aria-pressed={rating===n} onClick={()=>setRating(rating===n?0:n)} className={`h-9 w-9 rounded-lg border text-xs transition-colors ${n<=rating?"border-brand/30 bg-brand/7 text-brand":"border-line-2 bg-white text-dim hover:border-brand/30"}`}>{n}</button>)}</div></div>
         <div><label className="label" htmlFor="notes">Trade review</label><textarea id="notes" name="notes" rows={5} defaultValue={trade?.notes??""} placeholder={"What was your thesis? Did you follow your plan?\nWhat went well, and what would you do differently?"} className="field h-auto resize-y py-3 text-[13px] leading-relaxed"/></div>
+        <div className="sm:col-span-2"><span className="label">Tags</span><TagPicker allTags={allTags} selected={trade?.tags?.map((tag)=>tag.name)??[]}/><p className="mt-2 text-[10px] leading-relaxed text-muted">Label mistakes, emotions, conditions or anything else you want to compare in reports. New tags are created when you save the trade.</p></div>
       </div>
 
       {chosen&&chosen.criteria.length>0&&(
@@ -148,4 +185,8 @@ function ImageDrop({label,inputName,hint,preview,onPick,onRemove}:{label:string;
 
 function NumberField({name,label,value,placeholder,required=false}:{name:string;label:string;value?:number|null;placeholder:string;required?:boolean}) {
   return <div><label className="label" htmlFor={name}>{label}{required&&<span className="text-brand"> *</span>}</label><input id={name} name={name} type="number" step="any" inputMode="decimal" required={required} defaultValue={value??""} placeholder={placeholder} className="field num"/></div>;
+}
+
+function RiskField({name,label,value,onChange,placeholder,required=false,hint}:{name:string;label:string;value:string;onChange:(value:string)=>void;placeholder:string;required?:boolean;hint?:string}) {
+  return <div><label className="label" htmlFor={name}>{label}{required&&<span className="text-brand"> *</span>}</label><input id={name} name={name} type="number" step="any" inputMode="decimal" required={required} value={value} onChange={(event)=>onChange(event.target.value)} placeholder={placeholder} className="field num"/>{hint&&<p className="mt-1.5 text-[10px] text-dim">{hint}</p>}</div>;
 }

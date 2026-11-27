@@ -6,6 +6,7 @@ import {
   integer,
   numeric,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
@@ -66,6 +67,11 @@ export const trades = pgTable(
     direction: text("direction").$type<TradeDirection>().notNull(),
     entryPrice: numeric("entry_price", { precision: 18, scale: 5, mode: "number" }),
     exitPrice: numeric("exit_price", { precision: 18, scale: 5, mode: "number" }),
+    /** Planned stop loss and take profit, used for planned R:R and R-multiple. */
+    stopLoss: numeric("stop_loss", { precision: 18, scale: 5, mode: "number" }),
+    takeProfit: numeric("take_profit", { precision: 18, scale: 5, mode: "number" }),
+    /** Planned risk in the account currency — 1R. */
+    riskAmount: numeric("risk_amount", { precision: 14, scale: 2, mode: "number" }),
     size: numeric("size", { precision: 12, scale: 2, mode: "number" }),
     pnl: numeric("pnl", { precision: 14, scale: 2, mode: "number" }).notNull(),
     fees: numeric("fees", { precision: 14, scale: 2, mode: "number" }).notNull().default(0),
@@ -254,6 +260,113 @@ export const journalEntries = pgTable(
   ],
 );
 
+/* ----------------------------------- tags ---------------------------------- */
+
+export const tags = pgTable(
+  "tags",
+  {
+    id: serial("id").primaryKey(),
+    /** Owning Supabase Auth user. */
+    userId: uuid("user_id").notNull(),
+    name: text("name").notNull(),
+    /** Chip colour, assigned from a small palette when the tag is created. */
+    color: text("color").notNull().default("#0781fe"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("tags_user_idx").on(t.userId), uniqueIndex("tags_user_name_uq").on(t.userId, t.name)],
+);
+
+export const tradeTags = pgTable(
+  "trade_tags",
+  {
+    tradeId: integer("trade_id")
+      .notNull()
+      .references(() => trades.id, { onDelete: "cascade" }),
+    tagId: integer("tag_id")
+      .notNull()
+      .references(() => tags.id, { onDelete: "cascade" }),
+    /** Owning Supabase Auth user — mirrors trades.user_id for direct scoping. */
+    userId: uuid("user_id").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.tradeId, t.tagId] }),
+    index("trade_tags_user_idx").on(t.userId),
+    index("trade_tags_tag_idx").on(t.tagId),
+  ],
+);
+
+/* ------------------------------ daily routine ------------------------------ */
+
+export const RULE_STAGES = ["prepare", "trade", "reflect"] as const;
+export type RuleStage = (typeof RULE_STAGES)[number];
+
+/** One checkable rule in the Start My Day progress tracker. */
+export const tradingRules = pgTable(
+  "trading_rules",
+  {
+    id: serial("id").primaryKey(),
+    /** Owning Supabase Auth user. */
+    userId: uuid("user_id").notNull(),
+    stage: text("stage").$type<RuleStage>().notNull().default("prepare"),
+    title: text("title").notNull(),
+    description: text("description"),
+    active: boolean("active").notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("trading_rules_user_idx").on(t.userId),
+    uniqueIndex("trading_rules_user_title_uq").on(t.userId, t.title),
+  ],
+);
+
+/** The pre-market plan and end-of-day review for one trading date. */
+export const dailyPlans = pgTable(
+  "daily_plans",
+  {
+    id: serial("id").primaryKey(),
+    /** Owning Supabase Auth user. */
+    userId: uuid("user_id").notNull(),
+    planDate: date("plan_date").notNull(),
+    /* Before the session */
+    intention: text("intention"),
+    marketBias: text("market_bias"),
+    watchlist: text("watchlist"),
+    maxTrades: integer("max_trades"),
+    maxRiskPct: numeric("max_risk_pct", { precision: 5, scale: 2, mode: "number" }),
+    /* After the session */
+    review: text("review"),
+    rating: integer("rating"),
+    followedPlan: boolean("followed_plan"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("daily_plans_user_idx").on(t.userId),
+    uniqueIndex("daily_plans_user_date_uq").on(t.userId, t.planDate),
+  ],
+);
+
+/** A rule ticked on a given day. The unique key makes ticking idempotent. */
+export const dailyRuleChecks = pgTable(
+  "daily_rule_checks",
+  {
+    id: serial("id").primaryKey(),
+    /** Owning Supabase Auth user. */
+    userId: uuid("user_id").notNull(),
+    planDate: date("plan_date").notNull(),
+    ruleId: integer("rule_id")
+      .notNull()
+      .references(() => tradingRules.id, { onDelete: "cascade" }),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("daily_rule_checks_user_idx").on(t.userId),
+    index("daily_rule_checks_rule_idx").on(t.ruleId),
+    uniqueIndex("daily_rule_checks_user_date_rule_uq").on(t.userId, t.planDate, t.ruleId),
+  ],
+);
+
 export const accountsRelations = relations(accounts, ({ many }) => ({
   trades: many(trades),
 }));
@@ -271,3 +384,15 @@ export type NewTrade = typeof trades.$inferInsert;
 export type ChartCandle = typeof chartCandles.$inferSelect;
 export type JournalEntry = typeof journalEntries.$inferSelect;
 export type NewJournalEntry = typeof journalEntries.$inferInsert;
+
+export type Tag = typeof tags.$inferSelect;
+export type NewTag = typeof tags.$inferInsert;
+/** The tag fields safe to send to client components. */
+export type TradeTag = Pick<Tag, "id" | "name" | "color">;
+export type TradeWithTags = Trade & { tags: TradeTag[] };
+
+export type TradingRule = typeof tradingRules.$inferSelect;
+export type NewTradingRule = typeof tradingRules.$inferInsert;
+export type DailyPlan = typeof dailyPlans.$inferSelect;
+export type NewDailyPlan = typeof dailyPlans.$inferInsert;
+export type DailyRuleCheck = typeof dailyRuleChecks.$inferSelect;

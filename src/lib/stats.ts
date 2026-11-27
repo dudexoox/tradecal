@@ -21,6 +21,11 @@ export type Stats = {
   largestWin: number;
   largestLoss: number; // negative or 0
   avgTrade: number;
+  /** Number of trades where an R-multiple could be calculated. */
+  rTrades: number;
+  avgR: number | null;
+  totalR: number;
+  avgPlannedRR: number | null;
   maxDrawdown: number; // positive magnitude in currency
   maxDrawdownPct: number; // relative to peak balance
   currentStreak: { kind: "win" | "loss" | "none"; count: number };
@@ -45,6 +50,35 @@ export function effectiveTime(t: Trade) {
   return t.closedAt ?? t.openedAt;
 }
 
+/**
+ * Realised R-multiple. Planned risk wins; otherwise fall back to the
+ * entry → stop → exit price move, so old trades without a risk amount still
+ * get a useful R when a stop was recorded.
+ */
+export function tradeR(t: Trade): number | null {
+  if (t.riskAmount !== null && t.riskAmount > 0) return t.pnl / t.riskAmount;
+  const entry = t.entryPrice;
+  const stop = t.stopLoss;
+  const exit = t.exitPrice;
+  if (entry === null || stop === null || exit === null) return null;
+  const risk = Math.abs(entry - stop);
+  if (risk <= 0) return null;
+  const move = t.direction === "long" ? exit - entry : entry - exit;
+  return move / risk;
+}
+
+/** Planned reward-to-risk from entry, stop and target. */
+export function plannedRR(t: Trade): number | null {
+  const entry = t.entryPrice;
+  const stop = t.stopLoss;
+  const target = t.takeProfit;
+  if (entry === null || stop === null || target === null) return null;
+  const risk = Math.abs(entry - stop);
+  const reward = Math.abs(target - entry);
+  if (risk <= 0) return null;
+  return reward / risk;
+}
+
 function group<T extends string>(
   list: Trade[],
   keyOf: (t: Trade) => T | null | undefined,
@@ -61,6 +95,53 @@ function group<T extends string>(
   }
   return [...map.entries()]
     .map(([key, g]) => ({ key, pnl: g.pnl, trades: g.trades, winRate: g.trades ? (g.wins / g.trades) * 100 : 0 }))
+    .sort((a, b) => b.pnl - a.pnl);
+}
+
+export type PerformanceRow = {
+  key: string;
+  pnl: number;
+  trades: number;
+  wins: number;
+  winRate: number;
+  avgPnl: number;
+  totalR: number;
+  avgR: number | null;
+  rTrades: number;
+};
+
+/** Group trades for reports, including R-multiple metrics. */
+export function groupPerformance<T extends string>(
+  list: Trade[],
+  keyOf: (trade: Trade) => T | null | undefined,
+): PerformanceRow[] {
+  const map = new Map<T, { pnl: number; trades: number; wins: number; totalR: number; rTrades: number }>();
+  for (const trade of list) {
+    const key = keyOf(trade);
+    if (!key) continue;
+    const group = map.get(key) ?? { pnl: 0, trades: 0, wins: 0, totalR: 0, rTrades: 0 };
+    group.pnl += trade.pnl;
+    group.trades += 1;
+    if (trade.pnl > 0) group.wins += 1;
+    const r = tradeR(trade);
+    if (r !== null) {
+      group.totalR += r;
+      group.rTrades += 1;
+    }
+    map.set(key, group);
+  }
+  return [...map.entries()]
+    .map(([key, group]) => ({
+      key,
+      pnl: group.pnl,
+      trades: group.trades,
+      wins: group.wins,
+      winRate: group.trades ? (group.wins / group.trades) * 100 : 0,
+      avgPnl: group.trades ? group.pnl / group.trades : 0,
+      totalR: group.totalR,
+      avgR: group.rTrades ? group.totalR / group.rTrades : null,
+      rTrades: group.rTrades,
+    }))
     .sort((a, b) => b.pnl - a.pnl);
 }
 
@@ -127,6 +208,23 @@ export function computeStats(account: Pick<Account, "startingBalance">, input: T
   const avgLoss = losses ? grossLoss / losses : 0;
   const expectancy = total ? netPnl / total : 0;
 
+  let totalR = 0;
+  let rTrades = 0;
+  let plannedSum = 0;
+  let plannedCount = 0;
+  for (const trade of list) {
+    const r = tradeR(trade);
+    if (r !== null) {
+      totalR += r;
+      rTrades++;
+    }
+    const planned = plannedRR(trade);
+    if (planned !== null) {
+      plannedSum += planned;
+      plannedCount++;
+    }
+  }
+
   // streak from the most recent trade backwards
   let streak: Stats["currentStreak"] = { kind: "none", count: 0 };
   for (let i = list.length - 1; i >= 0; i--) {
@@ -168,6 +266,10 @@ export function computeStats(account: Pick<Account, "startingBalance">, input: T
     largestWin,
     largestLoss,
     avgTrade: expectancy,
+    rTrades,
+    avgR: rTrades ? totalR / rTrades : null,
+    totalR,
+    avgPlannedRR: plannedCount ? plannedSum / plannedCount : null,
     maxDrawdown: maxDd,
     maxDrawdownPct: maxDdPct,
     currentStreak: streak,

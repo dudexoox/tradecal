@@ -1,10 +1,29 @@
 import { db } from "@/db";
-import { accounts, journalEntries, trades, type Account, type PublicAccount, type Trade } from "@/db/schema";
-import { and, asc, desc, eq, gt, ilike, lt, sql } from "drizzle-orm";
+import {
+  accounts,
+  dailyPlans,
+  dailyRuleChecks,
+  journalEntries,
+  strategies,
+  tags,
+  tradeTags,
+  trades,
+  tradingRules,
+  type Account,
+  type DailyPlan,
+  type PublicAccount,
+  type Tag,
+  type Trade,
+  type TradeTag,
+  type TradeWithTags,
+  type TradingRule,
+} from "@/db/schema";
+import { and, asc, desc, eq, gt, gte, ilike, inArray, lt, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { requireUser } from "./auth";
 import { ensureSeeded } from "./seed";
 import { syncAccount } from "./mt5";
+import { ensureDefaultRules } from "./routine";
 
 export const ACCOUNT_COOKIE = "journal_account";
 const AUTO_SYNC_MS = 5 * 60_000;
@@ -64,16 +83,39 @@ export async function maybeAutoSync(account: PublicAccount): Promise<void> {
   if (full) await syncAccount(full);
 }
 
+/** Tags attached to a set of trades, scoped to the owning user. */
+async function tagsByTradeIds(userId: string, ids: number[]): Promise<Map<number, TradeTag[]>> {
+  const map = new Map<number, TradeTag[]>();
+  if (ids.length === 0) return map;
+  const rows = await db
+    .select({ tradeId: tradeTags.tradeId, id: tags.id, name: tags.name, color: tags.color })
+    .from(tradeTags)
+    .innerJoin(tags, eq(tags.id, tradeTags.tagId))
+    .where(and(eq(tradeTags.userId, userId), eq(tags.userId, userId), inArray(tradeTags.tradeId, ids)))
+    .orderBy(asc(tags.name));
+  for (const row of rows) {
+    const list = map.get(row.tradeId) ?? [];
+    list.push({ id: row.id, name: row.name, color: row.color });
+    map.set(row.tradeId, list);
+  }
+  return map;
+}
+
+function attachTags(rows: Trade[], map: Map<number, TradeTag[]>): TradeWithTags[] {
+  return rows.map((trade) => ({ ...trade, tags: map.get(trade.id) ?? [] }));
+}
+
 export type TradeFilters = {
   symbol?: string;
   direction?: "long" | "short";
   outcome?: "win" | "loss" | "be";
   setup?: string;
+  tag?: string;
   review?: "pending" | "reviewed";
   source?: "mt5" | "manual";
 };
 
-export async function getTrades(accountId: number, filters: TradeFilters = {}): Promise<Trade[]> {
+export async function getTrades(accountId: number, filters: TradeFilters = {}): Promise<TradeWithTags[]> {
   const userId = await requireUser();
   const conds = [eq(trades.accountId, accountId), eq(trades.userId, userId)];
   if (filters.symbol) conds.push(ilike(trades.symbol, `%${filters.symbol}%`));
@@ -86,11 +128,16 @@ export async function getTrades(accountId: number, filters: TradeFilters = {}): 
   if (filters.review === "reviewed") conds.push(sql`coalesce(trim(${trades.notes}), '') <> ''`);
   if (filters.source) conds.push(eq(trades.source, filters.source));
 
-  return db
+  const rows = await db
     .select()
     .from(trades)
     .where(and(...conds))
     .orderBy(desc(sql`coalesce(${trades.closedAt}, ${trades.openedAt})`), desc(trades.id));
+
+  const tagged = attachTags(rows, await tagsByTradeIds(userId, rows.map((row) => row.id)));
+  if (!filters.tag) return tagged;
+  const wanted = filters.tag.trim().toLowerCase();
+  return tagged.filter((trade) => trade.tags.some((tag) => tag.name.toLowerCase() === wanted));
 }
 
 /** Credential-free lookup, safe for server pages and client props. Ownership-checked. */
@@ -105,14 +152,31 @@ export async function getAccountById(id: number): Promise<PublicAccount | null> 
 }
 
 /** Ownership-checked: other users' trades are indistinguishable from missing ones. */
-export async function getTradeById(id: number): Promise<Trade | null> {
+export async function getTradeById(id: number): Promise<TradeWithTags | null> {
   const userId = await requireUser();
   const [row] = await db
     .select()
     .from(trades)
     .where(and(eq(trades.id, id), eq(trades.userId, userId)))
     .limit(1);
-  return row ?? null;
+  if (!row) return null;
+  return attachTags([row], await tagsByTradeIds(userId, [row.id]))[0];
+}
+
+/** Every tag owned by the signed-in user, including ones not attached to a trade yet. */
+export async function getTags(): Promise<Tag[]> {
+  const userId = await requireUser();
+  return db.select().from(tags).where(eq(tags.userId, userId)).orderBy(asc(tags.name));
+}
+
+/** Strategy names for the playbook report — ownership-checked. */
+export async function getStrategiesForReports(): Promise<{ id: number; name: string; playbookId: number | null }[]> {
+  const userId = await requireUser();
+  return db
+    .select({ id: strategies.id, name: strategies.name, playbookId: strategies.playbookId })
+    .from(strategies)
+    .where(eq(strategies.userId, userId))
+    .orderBy(asc(strategies.name));
 }
 
 export async function getDistinctSetups(accountId: number): Promise<string[]> {
@@ -182,4 +246,69 @@ export async function getAccountSummaries(): Promise<AccountSummary[]> {
     netPnl: Number(map.get(account.id)?.netPnl ?? 0),
     syncedCount: map.get(account.id)?.synced ?? 0,
   }));
+}
+
+/* ------------------------------- daily routine ------------------------------ */
+
+export type RoutineDay = { rules: TradingRule[]; checkedIds: number[]; plan: DailyPlan | null };
+export type RoutineHistoryDay = { checked: number; hasPlan: boolean; hasReview: boolean };
+
+/** Everything the Start My Day page needs for one date. Ownership-checked. */
+export async function getRoutineDay(planDate: string): Promise<RoutineDay> {
+  const userId = await requireUser();
+  await ensureDefaultRules(userId);
+  const [rules, checks, plans] = await Promise.all([
+    db
+      .select()
+      .from(tradingRules)
+      .where(eq(tradingRules.userId, userId))
+      .orderBy(asc(tradingRules.sortOrder), asc(tradingRules.id)),
+    db
+      .select({ ruleId: dailyRuleChecks.ruleId })
+      .from(dailyRuleChecks)
+      .where(and(eq(dailyRuleChecks.userId, userId), eq(dailyRuleChecks.planDate, planDate))),
+    db
+      .select()
+      .from(dailyPlans)
+      .where(and(eq(dailyPlans.userId, userId), eq(dailyPlans.planDate, planDate)))
+      .limit(1),
+  ]);
+  return { rules, checkedIds: checks.map((check) => check.ruleId), plan: plans[0] ?? null };
+}
+
+/** Rule completion and plan/review presence for a date range, keyed by YYYY-MM-DD. */
+export async function getRoutineHistory(fromDate: string): Promise<Map<string, RoutineHistoryDay>> {
+  const userId = await requireUser();
+  const [checks, plans] = await Promise.all([
+    db
+      .select({ planDate: dailyRuleChecks.planDate, checked: sql<number>`count(*)::int` })
+      .from(dailyRuleChecks)
+      .where(and(eq(dailyRuleChecks.userId, userId), gte(dailyRuleChecks.planDate, fromDate)))
+      .groupBy(dailyRuleChecks.planDate),
+    db
+      .select({
+        planDate: dailyPlans.planDate,
+        intention: dailyPlans.intention,
+        marketBias: dailyPlans.marketBias,
+        watchlist: dailyPlans.watchlist,
+        review: dailyPlans.review,
+        rating: dailyPlans.rating,
+      })
+      .from(dailyPlans)
+      .where(and(eq(dailyPlans.userId, userId), gte(dailyPlans.planDate, fromDate))),
+  ]);
+
+  const map = new Map<string, RoutineHistoryDay>();
+  for (const check of checks) {
+    map.set(check.planDate, { checked: Number(check.checked), hasPlan: false, hasReview: false });
+  }
+  for (const plan of plans) {
+    const current = map.get(plan.planDate) ?? { checked: 0, hasPlan: false, hasReview: false };
+    current.hasPlan = Boolean(
+      (plan.intention ?? "").trim() || (plan.marketBias ?? "").trim() || (plan.watchlist ?? "").trim(),
+    );
+    current.hasReview = Boolean((plan.review ?? "").trim() || plan.rating !== null);
+    map.set(plan.planDate, current);
+  }
+  return map;
 }

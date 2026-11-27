@@ -17,6 +17,7 @@ import { requireUser } from "@/lib/auth";
 import { syncAccount } from "@/lib/mt5";
 import { normalizeChartLink, removeUpload, saveUpload } from "@/lib/uploads";
 import { parseTradeCsv, type CsvTrade } from "@/lib/csv";
+import { normalizeTagNames, syncTradeTags } from "@/lib/tags";
 import { and, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
@@ -65,6 +66,9 @@ type ParsedTrade = {
   direction: TradeDirection;
   entryPrice: number | null;
   exitPrice: number | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  riskAmount: number | null;
   size: number | null;
   pnl: number;
   fees: number;
@@ -79,7 +83,7 @@ type ParsedTrade = {
   strategyId: number | null;
 };
 
-async function parseTrade(fd: FormData): Promise<{ data?: ParsedTrade; error?: string }> {
+async function parseTrade(fd: FormData): Promise<{ data?: ParsedTrade; tagNames?: string[]; error?: string }> {
   const symbol = str(fd, "symbol").toUpperCase();
   if (!symbol) return { error: "Symbol is required." };
   if (symbol.length > 20) return { error: "Symbol is too long." };
@@ -97,16 +101,25 @@ async function parseTrade(fd: FormData): Promise<{ data?: ParsedTrade; error?: s
 
   const entryPrice = num(fd, "entryPrice");
   const exitPrice = num(fd, "exitPrice");
+  const stopLoss = num(fd, "stopLoss");
+  const takeProfit = num(fd, "takeProfit");
+  const riskAmount = num(fd, "riskAmount");
   const size = num(fd, "size");
   const fees = num(fd, "fees") ?? 0;
   for (const [label, v] of [
     ["Entry price", entryPrice],
     ["Exit price", exitPrice],
+    ["Stop loss", stopLoss],
+    ["Take profit", takeProfit],
+    ["Planned risk", riskAmount],
     ["Size", size],
     ["Fees", fees],
   ] as const) {
     if (v !== null && Number.isNaN(v)) return { error: `${label} must be a number.` };
   }
+  if (stopLoss !== null && stopLoss <= 0) return { error: "Stop loss must be a positive price." };
+  if (takeProfit !== null && takeProfit <= 0) return { error: "Take profit must be a positive price." };
+  if (riskAmount !== null && riskAmount < 0) return { error: "Planned risk cannot be negative." };
 
   const ratingRaw = num(fd, "rating");
   const rating = ratingRaw === null || Number.isNaN(ratingRaw) ? null : Math.min(5, Math.max(1, Math.round(ratingRaw)));
@@ -143,9 +156,11 @@ async function parseTrade(fd: FormData): Promise<{ data?: ParsedTrade; error?: s
 
   return {
     data: {
-      symbol, direction, entryPrice, exitPrice, size, pnl, fees, openedAt, closedAt, setup, rating, notes,
+      symbol, direction, entryPrice, exitPrice, stopLoss, takeProfit, riskAmount, size, pnl, fees,
+      openedAt, closedAt, setup, rating, notes,
       chartImageUrl, setupImageUrl, tradingviewUrl: link.url ?? null, strategyId,
     },
+    tagNames: normalizeTagNames(str(fd, "tags")),
   };
 }
 
@@ -166,7 +181,11 @@ export async function createTrade(_prev: FormState, fd: FormData): Promise<FormS
     .limit(1);
   if (!owned) return { error: "Account not found." };
 
-  await db.insert(trades).values({ ...parsed.data, accountId: owned.id, userId });
+  const [created] = await db
+    .insert(trades)
+    .values({ ...parsed.data, accountId: owned.id, userId })
+    .returning({ id: trades.id });
+  await syncTradeTags(userId, created.id, parsed.tagNames ?? []);
   revalidatePath("/", "layout");
   redirect("/trades");
 }
@@ -184,6 +203,7 @@ export async function updateTrade(id: number, _prev: FormState, fd: FormData): P
   if (!parsed.data) return { error: parsed.error };
 
   await db.update(trades).set(parsed.data).where(and(eq(trades.id, id), eq(trades.userId, userId)));
+  await syncTradeTags(userId, id, parsed.tagNames ?? []);
 
   // Tidy up files that were replaced or removed.
   for (const old of [previous.chartImageUrl, previous.setupImageUrl]) {

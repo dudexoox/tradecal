@@ -51,6 +51,13 @@ export function fmtRatio(value: number, digits = 2) {
   return value.toFixed(digits);
 }
 
+/** R-multiple, e.g. +1.80R / −0.65R. */
+export function fmtR(value: number | null | undefined, digits = 2) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  const sign = value > 0 ? "+" : value < 0 ? "−" : "";
+  return `${sign}${Math.abs(value).toFixed(digits)}R`;
+}
+
 export function fmtDate(d: Date | string) {
   const date = typeof d === "string" ? new Date(d) : d;
   return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "short", year: "numeric" }).format(date);

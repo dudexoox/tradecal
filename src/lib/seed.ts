@@ -1,6 +1,7 @@
 import { db } from "@/db";
-import { accounts, journalEntries, playbooks, strategies, trades, type NewPlaybook, type NewStrategy, type NewTrade } from "@/db/schema";
+import { accounts, journalEntries, playbooks, strategies, tags, tradeTags, trades, type NewPlaybook, type NewStrategy, type NewTrade } from "@/db/schema";
 import { eq, sql } from "drizzle-orm";
+import { TAG_COLORS } from "./tags";
 
 type Template = {
   daysAgo: number;
@@ -45,6 +46,37 @@ const TEMPLATES: Template[] = [
   { daysAgo: 2, open: "09:15", durMin: 45, symbol: "GBPUSD", direction: "long", entry: 1.2656, exit: 1.2622, size: 1.0, pnl: -340, fees: 7, setup: "Pullback", rating: 3 },
   { daysAgo: 1, open: "14:30", durMin: 170, symbol: "XAUUSD", direction: "long", entry: 2331.1, exit: 2350.4, size: 0.5, pnl: 965, fees: 9, setup: "Reversal", rating: 5, notes: "Waited for the sweep, took the reclaim. Let it run." },
 ];
+
+/** Value of one pip/point for a 1.0 lot — used to price the demo risk. */
+const RISK_UNIT: Record<string, { unit: number; value: number }> = {
+  EURUSD: { unit: 0.0001, value: 10 },
+  GBPUSD: { unit: 0.0001, value: 10 },
+  USDJPY: { unit: 0.01, value: 6.55 },
+  GBPJPY: { unit: 0.01, value: 10 },
+  XAUUSD: { unit: 1, value: 100 },
+  US100: { unit: 1, value: 5 },
+};
+
+function round(value: number, digits: number) {
+  const factor = 10 ** digits;
+  return Math.round(value * factor) / factor;
+}
+
+/**
+ * Demo risk: a 0.3% stop away from entry, priced with the symbol's pip
+ * value, plus a target 1.5–3R away. Keeps the seeded R-multiples and planned
+ * R:R believable without pretending to be a real money-management plan.
+ */
+function demoRisk(t: Template) {
+  const { unit, value } = RISK_UNIT[t.symbol] ?? { unit: 0.0001, value: 10 };
+  const distance = t.entry * 0.003;
+  const targetR = t.rating >= 5 ? 3 : t.rating >= 4 ? 2 : 1.5;
+  return {
+    stopLoss: round(t.direction === "long" ? t.entry - distance : t.entry + distance, 5),
+    takeProfit: round(t.direction === "long" ? t.entry + distance * targetR : t.entry - distance * targetR, 5),
+    riskAmount: round((distance / unit) * value * t.size, 2),
+  };
+}
 
 function tradingDay(daysAgo: number) {
   const d = new Date();
@@ -275,6 +307,9 @@ async function insertDemoJournal(
       direction: t.direction,
       entryPrice: t.entry,
       exitPrice: t.exit,
+      stopLoss: demoRisk(t).stopLoss,
+      takeProfit: demoRisk(t).takeProfit,
+      riskAmount: demoRisk(t).riskAmount,
       size: t.size,
       pnl: t.pnl,
       fees: t.fees,
@@ -287,6 +322,35 @@ async function insertDemoJournal(
     };
   });
   const inserted = await tx.insert(trades).values(rows).returning({ id: trades.id });
+
+  /* A few demo tags so the tag library and the tag report are not empty on a
+     fresh install. Every row is owned by the same user as the trades. */
+  const demoTagDefs = [
+    { name: "A+ setup", color: TAG_COLORS[0], match: (t: Template) => t.rating >= 5 },
+    { name: "Rule break", color: TAG_COLORS[1], match: (t: Template) => t.rating <= 2 },
+    { name: "News", color: TAG_COLORS[2], match: (t: Template) => t.setup === "News" },
+    {
+      name: "Early entry",
+      color: TAG_COLORS[3],
+      match: (t: Template) => /chased|too early/i.test(t.notes ?? ""),
+    },
+  ];
+  const insertedTags = await tx
+    .insert(tags)
+    .values(demoTagDefs.map((tag) => ({ userId, name: tag.name, color: tag.color })))
+    .returning({ id: tags.id, name: tags.name });
+  const links: { tradeId: number; tagId: number; userId: string }[] = [];
+  TEMPLATES.forEach((template, index) => {
+    const tradeId = inserted[index]?.id;
+    if (!tradeId) return;
+    for (const definition of demoTagDefs) {
+      if (!definition.match(template)) continue;
+      const tag = insertedTags.find((row) => row.name === definition.name);
+      if (tag) links.push({ tradeId, tagId: tag.id, userId });
+    }
+  });
+  if (links.length > 0) await tx.insert(tradeTags).values(links).onConflictDoNothing();
+
   // Demo chart / setup artwork so the media section is visible on first run.
   const artwork: Record<number, Partial<NewTrade>> = {
     0: { chartImageUrl: "/seed/chart-1.svg" },

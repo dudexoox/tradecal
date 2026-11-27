@@ -1,7 +1,8 @@
 import type { Trade } from "@/db/schema";
 import { effectiveTime } from "./stats";
 
-export function filterPeriod(trades: Trade[], period?: string) {
+/** Keeps any extra trade fields (for example attached tags) intact. */
+export function filterPeriod<T extends Trade>(trades: T[], period?: string): T[] {
   const now = new Date();
   let from: Date | null = null;
   if (period === "month") from = new Date(now.getFullYear(), now.getMonth(), 1);

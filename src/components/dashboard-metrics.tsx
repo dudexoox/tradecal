@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Stats } from "@/lib/stats";
-import { fmtMoney, fmtPct, fmtRatio, pnlColor } from "@/lib/format";
+import { fmtMoney, fmtPct, fmtR, fmtRatio, pnlColor } from "@/lib/format";
 import { Icon } from "./icons";
 import { SymbolLogo } from "./symbol-logo";
 import type { ReactNode } from "react";
@@ -19,7 +19,7 @@ export function DashboardMetrics({ stats, currency, reviewed }: { stats: Stats; 
   const completed = stats.total ? reviewed / stats.total * 100 : 0;
   const avgRatio = stats.avgLoss ? stats.avgWin / stats.avgLoss : stats.avgWin > 0 ? Infinity : 0;
   const wonPct = stats.grossProfit + stats.grossLoss > 0 ? stats.grossProfit / (stats.grossProfit + stats.grossLoss) * 100 : 50;
-  return <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+  return <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
     <Metric label="Net P&L" help="The sum of the net P&L you logged for each trade.">
       <div className="num mt-3 text-[25px] font-semibold leading-none tracking-[-1px]">{fmtMoney(stats.netPnl, currency)}</div>
       <div className="mt-3 flex items-center gap-1.5 text-[10px] text-muted"><span className={`inline-flex items-center gap-0.5 rounded px-1 py-0.5 font-medium ${stats.netPnl >= 0 ? "bg-up/8 text-up" : "bg-down/8 text-down"}`}><Icon name="arrowUp" size={10} className={stats.netPnl < 0 ? "rotate-90" : ""}/>{fmtPct(stats.returnPct, 2)}</span><span>on starting balance</span></div>
@@ -35,6 +35,10 @@ export function DashboardMetrics({ stats, currency, reviewed }: { stats: Stats; 
     <Metric label="Avg. win / loss" help="Average winning trade compared with the average losing trade.">
       <div className="num mt-3 flex items-baseline gap-1.5 text-[19px] font-semibold tracking-[-0.7px]"><span className="text-up">{fmtMoney(stats.avgWin, currency, 0)}</span><span className="text-sm font-normal text-line-2">/</span><span className="text-down">{fmtMoney(stats.avgLoss, currency, 0)}</span></div>
       <div className="mt-3 text-[10px] text-muted"><span className="font-medium text-fg">{fmtRatio(avgRatio)}</span> win-to-loss ratio</div>
+    </Metric>
+    <Metric label="Average R" help="Average realised R-multiple. Trades without a stop or planned risk are excluded.">
+      <div className="num mt-3 text-[25px] font-semibold leading-none tracking-[-1px]">{fmtR(stats.avgR)}</div>
+      <div className="mt-3 text-[10px] text-muted">{stats.rTrades ? `${stats.rTrades} of ${stats.total} trades with R` : "Add a stop or planned risk"}</div>
     </Metric>
     <Metric label="Journaled trades" help="A trade counts as journaled when you have added review notes.">
       <div className="mt-1 flex items-center justify-between"><span className="num text-[25px] font-semibold tracking-[-1px]">{reviewed}<span className="ml-1 text-base font-normal text-dim">/ {stats.total}</span></span><Ring progress={completed}/></div>
