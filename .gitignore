@@ -28,6 +28,10 @@ Thumbs.db
 # Vercel
 .vercel/
 
+# Separate project imported from Drive; it has its own git repo
+football-prediction-app/
+google_drive/
+
 # Env files — secrets stay local; keep the documented example
 .env*
 !.env.example
