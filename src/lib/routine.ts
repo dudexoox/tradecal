@@ -3,7 +3,7 @@ import { RULE_STAGES, tradingRules, type RuleStage, type TradingRule } from "@/d
 import { eq, sql } from "drizzle-orm";
 import { dayKey } from "./format";
 
-/** A small, opinionated starting routine — editable from the Start My Day page. */
+/** A small, opinionated starting routine — editable from the Routine page. */
 const DEFAULT_RULES: { stage: RuleStage; title: string; description: string; sortOrder: number }[] = [
   {
     stage: "prepare",

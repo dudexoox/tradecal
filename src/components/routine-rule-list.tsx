@@ -21,11 +21,7 @@ export function RoutineRuleList({
   const [pending, startTransition] = useTransition();
 
   if (rules.length === 0) {
-    return (
-      <p className="rounded-lg border border-dashed border-line-2 px-4 py-5 text-center text-xs text-muted">
-        No rules in this stage yet. Add one below to start tracking it.
-      </p>
-    );
+    return <p className="py-1 text-[11px] text-muted">No rules in this stage yet.</p>;
   }
 
   const toggle = (ruleId: number) => {
@@ -45,8 +41,8 @@ export function RoutineRuleList({
   };
 
   return (
-    <div className={pending ? "opacity-80" : ""}>
-      <ul className="space-y-2">
+    <div className={pending ? "opacity-70" : ""}>
+      <ul className="divide-y divide-line">
         {rules.map((rule) => {
           const on = checked.has(rule.id);
           return (
@@ -55,21 +51,17 @@ export function RoutineRuleList({
                 type="button"
                 aria-pressed={on}
                 onClick={() => toggle(rule.id)}
-                className={`flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors ${
-                  on ? "border-up/20 bg-up/5" : "border-line bg-white hover:border-line-2 hover:bg-panel-2/40"
-                }`}
+                className="flex w-full items-start gap-3 py-2.5 text-left transition-opacity hover:opacity-75"
               >
                 <span
-                  className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors ${
-                    on ? "border-up/30 bg-up text-white" : "border-line-2 bg-white text-transparent"
+                  className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
+                    on ? "border-brand bg-brand text-white" : "border-line-2 bg-white text-transparent"
                   }`}
                 >
-                  <Icon name="check" size={12} />
+                  <Icon name="check" size={10} />
                 </span>
                 <span className="min-w-0">
-                  <span className={`block text-xs font-medium ${on ? "text-muted line-through" : "text-fg"}`}>
-                    {rule.title}
-                  </span>
+                  <span className={`block text-xs ${on ? "text-muted line-through" : "text-fg"}`}>{rule.title}</span>
                   {rule.description && (
                     <span className="mt-0.5 block text-[10px] leading-relaxed text-muted">{rule.description}</span>
                   )}

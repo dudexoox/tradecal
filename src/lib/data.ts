@@ -253,7 +253,7 @@ export async function getAccountSummaries(): Promise<AccountSummary[]> {
 export type RoutineDay = { rules: TradingRule[]; checkedIds: number[]; plan: DailyPlan | null };
 export type RoutineHistoryDay = { checked: number; hasPlan: boolean; hasReview: boolean };
 
-/** Everything the Start My Day page needs for one date. Ownership-checked. */
+/** Everything the Routine page needs for one date. Ownership-checked. */
 export async function getRoutineDay(planDate: string): Promise<RoutineDay> {
   const userId = await requireUser();
   await ensureDefaultRules(userId);

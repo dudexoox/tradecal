@@ -65,7 +65,7 @@ export default async function CalendarPage({searchParams}:{searchParams:Promise<
       <Link href={`/routine?date=${key}`} className="card flex flex-wrap items-center gap-4 px-5 py-4 transition-colors hover:border-brand/35">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand/7 text-brand"><Icon name="sparkles" size={18}/></span>
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-semibold">Start My Day routine</span><span className="num text-[10px] text-muted">{routineState.done} / {routineState.total} rules</span></div>
+          <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-semibold">Daily routine</span><span className="num text-[10px] text-muted">{routineState.done} / {routineState.total} rules</span></div>
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-panel-2"><div className="h-full rounded-full bg-brand/75" style={{width:`${routineState.pct}%`}}/></div>
           <p className="mt-2 text-[10px] text-muted">{planSaved?"Plan saved":"No plan yet"}<span className="mx-1.5 text-line-2">·</span>{reviewSaved?"Day reviewed":"Review pending"}</p>
         </div>

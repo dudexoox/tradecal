@@ -300,7 +300,7 @@ export const tradeTags = pgTable(
 export const RULE_STAGES = ["prepare", "trade", "reflect"] as const;
 export type RuleStage = (typeof RULE_STAGES)[number];
 
-/** One checkable rule in the Start My Day progress tracker. */
+/** One checkable rule in the daily Routine tracker. */
 export const tradingRules = pgTable(
   "trading_rules",
   {
