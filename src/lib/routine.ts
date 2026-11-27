@@ -156,6 +156,10 @@ export function routineBestStreak(history: Map<string, { checked: number }>, tot
 
 export type RoutineConsistency = { pct: number; perfectDays: number; activeDays: number; days: number };
 
+/**
+ * Rule completion over the last `days` calendar days, counting trading days
+ * only — weekends are skipped so a complete weekday routine reads as 100%.
+ */
 export function routineConsistency(
   history: Map<string, { checked: number }>,
   total: number,
@@ -166,14 +170,19 @@ export function routineConsistency(
   let sum = 0;
   let perfectDays = 0;
   let activeDays = 0;
+  let counted = 0;
   const last = startOfDay(end);
   for (let i = 0; i < days; i++) {
-    const checked = history.get(dayKey(addDays(last, -i)))?.checked ?? 0;
+    const date = addDays(last, -i);
+    const weekday = date.getDay() !== 0 && date.getDay() !== 6;
+    if (!weekday) continue;
+    counted += 1;
+    const checked = history.get(dayKey(date))?.checked ?? 0;
     sum += Math.min(100, (checked / total) * 100);
     if (checked >= total) perfectDays++;
     if (checked > 0) activeDays++;
   }
-  return { pct: sum / days, perfectDays, activeDays, days };
+  return { pct: counted ? sum / counted : 0, perfectDays, activeDays, days: counted };
 }
 
 export type HeatmapDay = {

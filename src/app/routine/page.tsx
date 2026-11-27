@@ -148,6 +148,7 @@ export default async function RoutinePage({
               <div className="rounded-lg border border-line bg-panel-2/40 px-3 py-3">
                 <p className="text-[9px] uppercase tracking-[0.1em] text-dim">Last 30 days</p>
                 <p className="num mt-1.5 text-xl font-semibold tracking-[-0.5px]">{fmtPct(consistency.pct, 0)}</p>
+                <p className="mt-0.5 text-[9px] text-muted">trading days</p>
               </div>
             </div>
           </div>
@@ -209,6 +210,9 @@ export default async function RoutinePage({
                   <p className="mt-1 text-[10px] text-muted">Rule completion</p>
                 </div>
               </div>
+              <p className="mb-5 text-[10px] text-muted">
+                Averaged over {consistency.days} trading days in the last 30 days.
+              </p>
               <RoutineHeatmap days={heatmap} />
             </section>
 
