@@ -25,8 +25,6 @@ const DEFAULTS = {
   chartStyle: "candles" as const,
   chartTheme: "light" as const,
   showZones: true,
-  showRunningPnl: true,
-  showHigherTimeframe: false,
   replaySpeed: 1,
 };
 
@@ -74,14 +72,6 @@ function parseInput(value: unknown): PreferencesInput | null {
   if (raw.showZones !== undefined) {
     if (typeof raw.showZones !== "boolean") return null;
     out.showZones = raw.showZones;
-  }
-  if (raw.showRunningPnl !== undefined) {
-    if (typeof raw.showRunningPnl !== "boolean") return null;
-    out.showRunningPnl = raw.showRunningPnl;
-  }
-  if (raw.showHigherTimeframe !== undefined) {
-    if (typeof raw.showHigherTimeframe !== "boolean") return null;
-    out.showHigherTimeframe = raw.showHigherTimeframe;
   }
   if (raw.replaySpeed !== undefined) {
     if (typeof raw.replaySpeed !== "number") return null;
@@ -134,9 +124,6 @@ export async function PUT(request: Request) {
     chartStyle: patch.chartStyle ?? current?.chartStyle ?? DEFAULTS.chartStyle,
     chartTheme: patch.chartTheme ?? current?.chartTheme ?? DEFAULTS.chartTheme,
     showZones: patch.showZones ?? current?.showZones ?? DEFAULTS.showZones,
-    showRunningPnl: patch.showRunningPnl ?? current?.showRunningPnl ?? DEFAULTS.showRunningPnl,
-    showHigherTimeframe:
-      patch.showHigherTimeframe ?? current?.showHigherTimeframe ?? DEFAULTS.showHigherTimeframe,
     replaySpeed: patch.replaySpeed ?? current?.replaySpeed ?? DEFAULTS.replaySpeed,
     updatedAt: new Date(),
   };
@@ -156,8 +143,6 @@ export async function PUT(request: Request) {
         chartStyle: values.chartStyle,
         chartTheme: values.chartTheme,
         showZones: values.showZones,
-        showRunningPnl: values.showRunningPnl,
-        showHigherTimeframe: values.showHigherTimeframe,
         replaySpeed: values.replaySpeed,
         updatedAt: values.updatedAt,
       },

@@ -60,13 +60,6 @@ export function timeframeMinutes(tf: ChartTimeframe): number {
   return CHART_TIMEFRAMES.find((t) => t.value === tf)?.minutes ?? 15;
 }
 
-/** The next timeframe up — used for the higher-timeframe context pane. */
-export function nextTimeframe(tf: ChartTimeframe): ChartTimeframe {
-  const order = CHART_TIMEFRAMES.map((t) => t.value);
-  const index = order.indexOf(tf);
-  return order[Math.min(order.length - 1, index + 1)];
-}
-
 /** Pick a sensible starting timeframe from how long the trade was open. */
 export function defaultTimeframe(trade: ChartTradeMeta): ChartTimeframe {
   const open = Date.parse(trade.openedAt);
@@ -97,6 +90,16 @@ export function barIndexAt(candles: ChartCandle[], seconds: number): number {
   return found;
 }
 
+/** The time of the bar closest to `seconds` — drawings snap to the bars. */
+export function nearestBarTime(candles: ChartCandle[], seconds: number): number {
+  if (candles.length === 0) return seconds;
+  const index = Math.max(0, Math.min(candles.length - 1, barIndexAt(candles, seconds)));
+  const before = candles[index];
+  const after = candles[Math.min(index + 1, candles.length - 1)];
+  if (!after || after === before) return before.time;
+  return Math.abs(after.time - seconds) < Math.abs(seconds - before.time) ? after.time : before.time;
+}
+
 /**
  * Money earned per unit of price movement. Taken from the realised result
  * (entry → exit) so the running P&L matches what the broker paid; falls back
@@ -114,25 +117,6 @@ export function moneyPerPriceUnit(trade: ChartTradeMeta): number | null {
     if (risk > 0) return trade.riskAmount / risk;
   }
   return null;
-}
-
-/** Running P&L for every bar between the entry and the exit. */
-export function runningPnlSeries(
-  candles: ChartCandle[],
-  trade: ChartTradeMeta,
-): { time: number; value: number }[] {
-  const unit = moneyPerPriceUnit(trade);
-  const entry = trade.entryPrice;
-  if (unit === null || entry === null) return [];
-  const openSec = Math.floor(Date.parse(trade.openedAt) / 1000);
-  const closeSec = trade.closedAt ? Math.floor(Date.parse(trade.closedAt) / 1000) : Number.POSITIVE_INFINITY;
-  const out: { time: number; value: number }[] = [];
-  for (const candle of candles) {
-    if (candle.time < openSec || candle.time > closeSec) continue;
-    const move = trade.direction === "long" ? candle.close - entry : entry - candle.close;
-    out.push({ time: candle.time, value: move * unit });
-  }
-  return out;
 }
 
 /** Realised R-multiple, mirroring the journal maths. */

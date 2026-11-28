@@ -141,6 +141,45 @@ export const chartCandles = pgTable(
   ],
 );
 
+/* ---------------------------- chart drawings ---------------------------- */
+
+/** Shapes the replay chart can draw on top of the candles. */
+export const CHART_DRAWING_KINDS = ["trendline", "hline", "rectangle"] as const;
+export type ChartDrawingKind = (typeof CHART_DRAWING_KINDS)[number];
+
+/**
+ * One anchor of a drawing. The time is absolute (unix seconds) rather than a
+ * bar index, so a drawing keeps its place when the timeframe changes.
+ */
+export type ChartDrawingPoint = { time: number; price: number };
+
+/**
+ * Drawings a user made on one trade's chart. They belong to the trade (so
+ * every trade keeps its own notes) and to the user (so they can never be
+ * read or changed by anyone else).
+ */
+export const chartDrawings = pgTable(
+  "chart_drawings",
+  {
+    id: serial("id").primaryKey(),
+    tradeId: integer("trade_id")
+      .notNull()
+      .references(() => trades.id, { onDelete: "cascade" }),
+    /** Owning Supabase Auth user — mirrors trades.user_id for direct scoping. */
+    userId: uuid("user_id").notNull(),
+    kind: text("kind").$type<ChartDrawingKind>().notNull(),
+    /** Anchors as [{ time, price }]. */
+    points: jsonb("points").$type<ChartDrawingPoint[]>().notNull().default([]),
+    color: text("color").notNull().default("#0781fe"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("chart_drawings_trade_idx").on(t.tradeId),
+    index("chart_drawings_user_idx").on(t.userId),
+  ],
+);
+
 /* ---------------------------- chart preferences ---------------------------- */
 
 /** Interval values accepted by the TradingView Advanced Chart widget. */
@@ -165,6 +204,10 @@ export type ChartReplaySpeed = (typeof CHART_REPLAY_SPEEDS)[number];
  * One chart setup per signed-in user, shared by every trade. The TradingView
  * columns drive the hosted widget (drawings, indicators and its own settings);
  * the workspace columns drive the replay chart drawn from the broker candles.
+ *
+ * The `show_running_pnl` and `show_higher_timeframe` columns are leftovers
+ * from the old bottom panes; the chart is a single pane now, so they are no
+ * longer read or written.
  */
 export const chartPreferences = pgTable("chart_preferences", {
   userId: uuid("user_id").primaryKey(),
@@ -178,8 +221,6 @@ export const chartPreferences = pgTable("chart_preferences", {
   chartStyle: text("chart_style").$type<ChartStyle>().notNull().default("candles"),
   chartTheme: text("chart_theme").$type<ChartTheme>().notNull().default("light"),
   showZones: boolean("show_zones").notNull().default(true),
-  showRunningPnl: boolean("show_running_pnl").notNull().default(true),
-  showHigherTimeframe: boolean("show_higher_timeframe").notNull().default(false),
   replaySpeed: real("replay_speed").notNull().default(1),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

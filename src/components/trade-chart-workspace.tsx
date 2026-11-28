@@ -10,7 +10,6 @@ import {
   chartTradeR,
   defaultTimeframe,
   moneyPerPriceUnit,
-  nextTimeframe,
   REPLAY_SPEEDS,
   replayPlan,
   shiftCandles,
@@ -18,6 +17,7 @@ import {
   type ChartStyle,
   type ChartTradeMeta,
 } from "@/lib/chart-workspace";
+import type { ChartDrawing, DrawingAction } from "@/lib/chart-drawings";
 import { fmtDuration, fmtMoney, fmtNum, fmtPrice, fmtR, fmtSignedMoney, fmtTime } from "@/lib/format";
 import { Icon } from "./icons";
 import { TradeChartCanvas, type ChartTheme } from "./trade-chart-canvas";
@@ -27,8 +27,6 @@ type Setup = {
   chartStyle: ChartStyle;
   chartTheme: ChartTheme;
   showZones: boolean;
-  showRunningPnl: boolean;
-  showHigherTimeframe: boolean;
   replaySpeed: number;
 };
 
@@ -37,8 +35,6 @@ const DEFAULT_SETUP: Setup = {
   chartStyle: "candles",
   chartTheme: "light",
   showZones: true,
-  showRunningPnl: true,
-  showHigherTimeframe: false,
   replaySpeed: 1,
 };
 
@@ -68,7 +64,7 @@ export function TradeChartWorkspace({
 }) {
   const [setup, setSetup] = useState<Setup>({ ...DEFAULT_SETUP, timeframe: defaultTimeframe(trade) });
   const [candles, setCandles] = useState<ChartCandle[]>([]);
-  const [higherCandles, setHigherCandles] = useState<ChartCandle[]>([]);
+  const [drawings, setDrawings] = useState<ChartDrawing[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cursor, setCursor] = useState<number | null>(null);
@@ -94,12 +90,6 @@ export function TradeChartWorkspace({
           chartStyle: isChartStyle(p.chartStyle) ? p.chartStyle : DEFAULT_SETUP.chartStyle,
           chartTheme: isTheme(p.chartTheme) ? p.chartTheme : DEFAULT_SETUP.chartTheme,
           showZones: typeof p.showZones === "boolean" ? p.showZones : DEFAULT_SETUP.showZones,
-          showRunningPnl:
-            typeof p.showRunningPnl === "boolean" ? p.showRunningPnl : DEFAULT_SETUP.showRunningPnl,
-          showHigherTimeframe:
-            typeof p.showHigherTimeframe === "boolean"
-              ? p.showHigherTimeframe
-              : DEFAULT_SETUP.showHigherTimeframe,
           replaySpeed: typeof p.replaySpeed === "number" && p.replaySpeed > 0 ? p.replaySpeed : DEFAULT_SETUP.replaySpeed,
         });
       } catch {
@@ -136,24 +126,22 @@ export function TradeChartWorkspace({
     return () => controller.abort();
   }, [trade.id, setup.timeframe]);
 
-  /* Higher timeframe context for the second pane. */
+  /* The drawings the user made on this trade. */
   useEffect(() => {
-    if (!setup.showHigherTimeframe) return;
-    const tf = nextTimeframe(setup.timeframe);
     const controller = new AbortController();
     void (async () => {
       try {
-        const res = await fetch(`/api/trades/${trade.id}/chart?tf=${tf}`, { signal: controller.signal });
-        if (!res.ok) throw new Error("no candles");
-        const data = (await res.json()) as { candles?: ChartCandle[] };
+        const res = await fetch(`/api/trades/${trade.id}/drawings`, { signal: controller.signal });
+        if (!res.ok) return;
+        const data = (await res.json()) as { drawings?: ChartDrawing[] };
         if (controller.signal.aborted) return;
-        setHigherCandles(data.candles ?? []);
+        setDrawings((data.drawings ?? []).map((drawing) => ({ ...drawing, key: `d${drawing.id}` })));
       } catch {
-        if (!controller.signal.aborted) setHigherCandles([]);
+        // A trade without drawings still shows a clean chart.
       }
     })();
     return () => controller.abort();
-  }, [trade.id, setup.timeframe, setup.showHigherTimeframe]);
+  }, [trade.id]);
 
   const plan = useMemo(() => replayPlan(candles, trade), [candles, trade]);
   const unit = useMemo(() => moneyPerPriceUnit(trade), [trade]);
@@ -164,7 +152,6 @@ export function TradeChartWorkspace({
      price level than the trade. The chart shifts them to line the trade up. */
   const offset = useMemo(() => chartPriceOffset(candles, trade), [candles, trade]);
   const chartCandles = useMemo(() => shiftCandles(candles, offset), [candles, offset]);
-  const chartHigher = useMemo(() => shiftCandles(higherCandles, offset), [higherCandles, offset]);
 
   /* Playback: one bar per tick, faster with a higher speed. */
   useEffect(() => {
@@ -200,14 +187,70 @@ export function TradeChartWorkspace({
     setMessage(null);
   };
 
-  /* The higher timeframe pane is fetched on demand. */
-  const toggleHigherTimeframe = () => {
-    const next = !setup.showHigherTimeframe;
-    setSetup((prev) => ({ ...prev, showHigherTimeframe: next }));
-    if (!next) setHigherCandles([]);
-    setDirty(true);
-    setMessage(null);
-  };
+  /* Drawings are saved per trade, so they come back with the trade. */
+  const onDrawingsChange = useCallback(
+    (next: ChartDrawing[], action: DrawingAction) => {
+      setDrawings(next);
+      setMessage(null);
+      const url = `/api/trades/${trade.id}/drawings`;
+      void (async () => {
+        try {
+          if (action.type === "create") {
+            const res = await fetch(url, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                kind: action.drawing.kind,
+                points: action.drawing.points,
+                color: action.drawing.color,
+              }),
+            });
+            if (!res.ok) throw new Error("save");
+            const data = (await res.json()) as { drawing?: ChartDrawing };
+            const saved = data.drawing;
+            if (!saved) return;
+            setDrawings((current) =>
+              current.map((drawing) =>
+                drawing.key === action.drawing.key ? { ...saved, key: drawing.key } : drawing,
+              ),
+            );
+            return;
+          }
+          if (action.type === "update") {
+            const res = await fetch(url, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                id: action.drawing.id,
+                points: action.drawing.points,
+                color: action.drawing.color,
+              }),
+            });
+            if (!res.ok) throw new Error("save");
+            return;
+          }
+          if (action.type === "delete") {
+            const res = await fetch(url, {
+              method: "DELETE",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ id: action.id }),
+            });
+            if (!res.ok) throw new Error("save");
+            return;
+          }
+          const res = await fetch(url, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ all: true }),
+          });
+          if (!res.ok) throw new Error("save");
+        } catch {
+          setMessage("Could not save the drawing.");
+        }
+      })();
+    },
+    [trade.id],
+  );
 
   const save = useCallback(async () => {
     setSaving(true);
@@ -266,7 +309,7 @@ export function TradeChartWorkspace({
     return move * unit;
   }, [revealedCandle, unit, trade, plan, activeIndex]);
 
-  const toggle = (label: string, active: boolean, onClick: () => void, icon?: "eye" | "layers" | "chart") => (
+  const toggle = (label: string, active: boolean, onClick: () => void) => (
     <button
       type="button"
       onClick={onClick}
@@ -276,7 +319,6 @@ export function TradeChartWorkspace({
           : "border-line-2 bg-white text-muted hover:bg-panel-2 hover:text-fg"
       }`}
     >
-      {icon && <Icon name={icon} size={13} />}
       {label}
     </button>
   );
@@ -320,13 +362,6 @@ export function TradeChartWorkspace({
 
         <div className="flex flex-wrap items-center gap-1.5">
           {toggle("Zones", setup.showZones, () => update("showZones", !setup.showZones))}
-          {toggle("Running P&L", setup.showRunningPnl, () => update("showRunningPnl", !setup.showRunningPnl), "chart")}
-          {toggle(
-            nextTimeframe(setup.timeframe),
-            setup.showHigherTimeframe,
-            toggleHigherTimeframe,
-            "layers",
-          )}
         </div>
 
         <div className="ml-auto flex items-center gap-1.5">
@@ -389,15 +424,14 @@ export function TradeChartWorkspace({
             {candles.length > 0 && (
               <TradeChartCanvas
                 candles={chartCandles}
-                higherCandles={chartHigher}
                 trade={trade}
                 style={setup.chartStyle}
                 theme={setup.chartTheme}
                 showZones={setup.showZones}
-                showRunningPnl={setup.showRunningPnl}
-                showHigher={setup.showHigherTimeframe}
                 cursor={cursor}
                 fitRequest={fitRequest}
+                drawings={drawings}
+                onDrawingsChange={onDrawingsChange}
               />
             )}
             {offset !== 0 && candles.length > 0 && (

@@ -42,6 +42,12 @@ const paths = {
   moon: <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/>,
   fit: <><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></>,
   eye: <><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.8"/></>,
+  cursor: <path d="m6 3.2 11.8 7.1-5 1.2-1.9 5.6L6 3.2Z"/>,
+  trendline: <><path d="M4.5 19.5 19.5 4.5"/><circle cx="4.5" cy="19.5" r="2"/><circle cx="19.5" cy="4.5" r="2"/></>,
+  hline: <><path d="M3 12h18"/><circle cx="3" cy="12" r="1.8"/><circle cx="21" cy="12" r="1.8"/></>,
+  rectangle: <rect x="3.5" y="5.5" width="17" height="13" rx="1.5"/>,
+  eraser: <><path d="m13.5 4.5 6.5 6.5-7.5 7.5H7l-3-3 9.5-10.5Z"/><path d="M9 21h11"/></>,
+  trash: <><path d="M4.5 6.5h15M9.5 6.5v-2h5v2M6.5 6.5 7.5 20h9l1-13.5M10 10v6M14 10v6"/></>,
 } as const;
 
 export type IconName = keyof typeof paths;
