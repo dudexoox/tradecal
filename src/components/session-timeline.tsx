@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { deleteSessionMarker } from "@/app/session-actions";
 import type { TimelineEvent } from "@/lib/timeline";
 import { fmtDuration, fmtMoney, fmtR, fmtTime } from "@/lib/format";
 import { tradeR } from "@/lib/stats";
+import { DeleteButton } from "./delete-button";
 import { Icon } from "./icons";
 
 const MARKER_TONE: Record<string, string> = {
@@ -128,6 +130,12 @@ function TimelineRow({ event, currency }: { event: TimelineEvent; currency: stri
             <span className={`rounded-md border px-1.5 py-0.5 text-[9px] font-medium capitalize ${MARKER_TONE[marker.kind] ?? MARKER_TONE.note}`}>
               {marker.kind}
             </span>
+            <DeleteButton
+              action={deleteSessionMarker.bind(null, marker.id)}
+              label="Remove"
+              confirmText="Remove this note from the timeline?"
+              className="ml-auto rounded-md px-1.5 py-0.5 text-[9px] font-medium text-dim transition-colors hover:bg-down/10 hover:text-down"
+            />
           </div>
           <p className="mt-1 text-[12px] leading-relaxed text-fg">{marker.note}</p>
         </div>
