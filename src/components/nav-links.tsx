@@ -14,6 +14,13 @@ const LINKS: { href: string; label: string; icon: IconName }[] = [
   { href: "/journal", label: "Notebook", icon: "notebook" },
 ];
 
+/** Planning and tooling — kept below the main workspace pages. */
+const TOOLS: { href: string; label: string; icon: IconName }[] = [
+  { href: "/goals", label: "Goals", icon: "target" },
+  { href: "/digest", label: "Digest", icon: "layers" },
+  { href: "/templates", label: "Templates", icon: "bookmark" },
+];
+
 const isPlaybook = (pathname: string) => pathname.startsWith("/playbook") || pathname.startsWith("/strategies");
 
 /**
@@ -56,6 +63,27 @@ export function NavLinks({ mobile = false }: { mobile?: boolean }) {
       })}
 
       {!mobile && (
+        <div className="mt-6 space-y-1 border-t border-line pt-5">
+          {TOOLS.map((l) => {
+            const active = isActive(l.href);
+            return (
+              <Link
+                key={l.href}
+                href={l.href}
+                title={l.label}
+                aria-current={active ? "page" : undefined}
+                className={linkClass(active)}
+              >
+                <Icon name={l.icon} size={18} />
+                <span className="side-detail">{l.label}</span>
+                {active && <span className="side-detail ml-auto h-1.5 w-1.5 rounded-full bg-brand" />}
+              </Link>
+            );
+          })}
+        </div>
+      )}
+
+      {!mobile && (
         <div className="mt-6 border-t border-line pt-5">
           <Link
             href="/accounts"
@@ -78,7 +106,9 @@ export function Breadcrumb() {
     ? "Accounts"
     : isPlaybook(pathname)
       ? "Playbook"
-      : (LINKS.find((l) => l.href !== "/" && pathname.startsWith(l.href))?.label ?? "Dashboard");
+      : (LINKS.find((l) => l.href !== "/" && pathname.startsWith(l.href))?.label ??
+        TOOLS.find((l) => pathname.startsWith(l.href))?.label ??
+        "Dashboard");
   return (
     <div className="hidden min-w-0 items-center gap-2.5 text-xs sm:flex">
       <span className="text-dim">Workspace</span>

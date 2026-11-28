@@ -1,9 +1,10 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   boolean,
   date,
   index,
   integer,
+  jsonb,
   numeric,
   pgTable,
   primaryKey,
@@ -366,6 +367,208 @@ export const dailyRuleChecks = pgTable(
     uniqueIndex("daily_rule_checks_user_date_rule_uq").on(t.userId, t.planDate, t.ruleId),
   ],
 );
+
+/* --------------------------- goals & risk limits --------------------------- */
+
+/**
+ * Per-account trading goals and guardrails. Amounts are in the account
+ * currency; when an amount is left empty the account's percentage objective
+ * is used instead, so an account always has sensible limits.
+ */
+export const tradingGoals = pgTable(
+  "trading_goals",
+  {
+    id: serial("id").primaryKey(),
+    /** Owning Supabase Auth user. */
+    userId: uuid("user_id").notNull(),
+    accountId: integer("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    /** Net profit target for the account, in account currency. */
+    profitTarget: numeric("profit_target", { precision: 14, scale: 2, mode: "number" }),
+    /** Maximum loss allowed in a single day. */
+    dailyLossLimit: numeric("daily_loss_limit", { precision: 14, scale: 2, mode: "number" }),
+    /** Maximum total loss allowed on the account. */
+    maxLossLimit: numeric("max_loss_limit", { precision: 14, scale: 2, mode: "number" }),
+    /** Maximum planned risk for a single trade, in account currency. */
+    maxRiskPerTrade: numeric("max_risk_per_trade", { precision: 14, scale: 2, mode: "number" }),
+    /** Maximum planned risk for a single trade, as a percentage of the balance. */
+    maxRiskPerTradePct: numeric("max_risk_per_trade_pct", { precision: 5, scale: 2, mode: "number" }),
+    /** Maximum number of trades allowed in one day. */
+    maxTradesPerDay: integer("max_trades_per_day"),
+    /** Maximum number of trades allowed open at the same time. */
+    maxOpenTrades: integer("max_open_trades"),
+    /** Percentage of a limit at which a warning appears. */
+    warnAtPct: numeric("warn_at_pct", { precision: 5, scale: 2, mode: "number" }).notNull().default(80),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("trading_goals_user_idx").on(t.userId),
+    uniqueIndex("trading_goals_user_account_uq").on(t.userId, t.accountId),
+  ],
+);
+
+export type TradingGoal = typeof tradingGoals.$inferSelect;
+
+/* ----------------------------- session replay ------------------------------ */
+
+export const SESSION_MARKER_KINDS = ["note", "plan", "mistake", "win"] as const;
+export type SessionMarkerKind = (typeof SESSION_MARKER_KINDS)[number];
+
+/** A note pinned to a moment inside a trading session. */
+export const sessionMarkers = pgTable(
+  "session_markers",
+  {
+    id: serial("id").primaryKey(),
+    /** Owning Supabase Auth user. */
+    userId: uuid("user_id").notNull(),
+    accountId: integer("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    /** The trading day this marker belongs to. */
+    markerDate: date("marker_date").notNull(),
+    /** Exact moment the marker refers to. */
+    at: timestamp("at", { withTimezone: true }).notNull(),
+    kind: text("kind").$type<SessionMarkerKind>().notNull().default("note"),
+    note: text("note").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("session_markers_user_idx").on(t.userId),
+    index("session_markers_date_idx").on(t.markerDate),
+  ],
+);
+
+export type SessionMarker = typeof sessionMarkers.$inferSelect;
+
+/* -------------------------- performance digest ----------------------------- */
+
+export const DIGEST_PERIODS = ["week", "month"] as const;
+export type DigestPeriod = (typeof DIGEST_PERIODS)[number];
+
+/** The numbers behind an auto-written digest. */
+export type DigestMetrics = {
+  pnl: number;
+  trades: number;
+  wins: number;
+  winRate: number;
+  totalR: number | null;
+  avgR: number | null;
+  tradingDays: number;
+  bestDay: { key: string; pnl: number } | null;
+  worstDay: { key: string; pnl: number } | null;
+  bestSetup: string | null;
+  rulesDone: number;
+  rulesTotal: number;
+  rulePct: number;
+};
+
+/** One auto-written weekly or monthly summary, with an optional personal note. */
+export const performanceDigests = pgTable(
+  "performance_digests",
+  {
+    id: serial("id").primaryKey(),
+    /** Owning Supabase Auth user. */
+    userId: uuid("user_id").notNull(),
+    accountId: integer("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    period: text("period").$type<DigestPeriod>().notNull(),
+    /** First day of the week or month the digest covers. */
+    periodStart: date("period_start").notNull(),
+    /** The generated summary text. */
+    summary: text("summary").notNull(),
+    metrics: jsonb("metrics").$type<DigestMetrics>().notNull().default(sql`'{}'::jsonb`),
+    /** A note the trader adds to the generated summary. */
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("performance_digests_user_idx").on(t.userId),
+    uniqueIndex("performance_digests_user_account_period_uq").on(
+      t.userId,
+      t.accountId,
+      t.period,
+      t.periodStart,
+    ),
+  ],
+);
+
+export type PerformanceDigest = typeof performanceDigests.$inferSelect;
+
+/* ------------------------- saved views & columns --------------------------- */
+
+/** The filters a saved trade-log view can capture. */
+export type TradeViewFilters = {
+  symbol?: string;
+  direction?: "long" | "short";
+  outcome?: "win" | "loss" | "be";
+  setup?: string;
+  tag?: string;
+  review?: "pending" | "reviewed";
+  source?: "mt5" | "manual";
+};
+
+/** A saved filter + column set for the trade log. */
+export const tradeViews = pgTable(
+  "trade_views",
+  {
+    id: serial("id").primaryKey(),
+    /** Owning Supabase Auth user. */
+    userId: uuid("user_id").notNull(),
+    accountId: integer("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    filters: jsonb("filters").$type<TradeViewFilters>().notNull().default(sql`'{}'::jsonb`),
+    /** Ordered list of visible column keys. Empty means "the default set". */
+    columns: jsonb("columns").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    pinned: boolean("pinned").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("trade_views_user_idx").on(t.userId),
+    uniqueIndex("trade_views_user_account_name_uq").on(t.userId, t.accountId, t.name),
+  ],
+);
+
+export type TradeView = typeof tradeViews.$inferSelect;
+
+/* ---------------------------- setup templates ------------------------------ */
+
+/** A reusable setup: log the same trade again with one click. */
+export const tradeTemplates = pgTable(
+  "trade_templates",
+  {
+    id: serial("id").primaryKey(),
+    /** Owning Supabase Auth user. */
+    userId: uuid("user_id").notNull(),
+    name: text("name").notNull(),
+    symbol: text("symbol").notNull(),
+    direction: text("direction").$type<TradeDirection>().notNull().default("long"),
+    entryPrice: numeric("entry_price", { precision: 18, scale: 5, mode: "number" }),
+    stopLoss: numeric("stop_loss", { precision: 18, scale: 5, mode: "number" }),
+    takeProfit: numeric("take_profit", { precision: 18, scale: 5, mode: "number" }),
+    riskAmount: numeric("risk_amount", { precision: 14, scale: 2, mode: "number" }),
+    size: numeric("size", { precision: 12, scale: 2, mode: "number" }),
+    setup: text("setup"),
+    notes: text("notes"),
+    strategyId: integer("strategy_id").references(() => strategies.id, { onDelete: "set null" }),
+    /** Tag names applied to every trade logged from this template. */
+    tags: jsonb("tags").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("trade_templates_user_idx").on(t.userId),
+    uniqueIndex("trade_templates_user_name_uq").on(t.userId, t.name),
+  ],
+);
+
+export type TradeTemplate = typeof tradeTemplates.$inferSelect;
 
 export const accountsRelations = relations(accounts, ({ many }) => ({
   trades: many(trades),

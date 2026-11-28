@@ -2,13 +2,16 @@ import Link from "next/link";
 import { MonthCalendar, parseMonth } from "@/components/calendar";
 import { Icon } from "@/components/icons";
 import { JournalForm } from "@/components/journal-form";
+import { SessionMarkerForm } from "@/components/session-marker-form";
+import { SessionTimeline } from "@/components/session-timeline";
 import { TradesTable } from "@/components/trades-table";
 import { Empty, MoodPill, PageTitle, Pnl, SectionTitle } from "@/components/ui";
-import { getActiveAccount, getJournalEntries, getRoutineDay, getTrades } from "@/lib/data";
+import { getActiveAccount, getJournalEntries, getRoutineDay, getSessionMarkers, getTrades } from "@/lib/data";
 import { dayKey, fmtPct } from "@/lib/format";
 import { parseDay } from "@/lib/period";
 import { computeStats, effectiveTime } from "@/lib/stats";
 import { routineProgress } from "@/lib/routine";
+import { buildTimeline } from "@/lib/timeline";
 
 export const dynamic="force-dynamic";
 
@@ -29,6 +32,8 @@ export default async function CalendarPage({searchParams}:{searchParams:Promise<
   const key=dayKey(selected);
   const trades=allTrades.filter((t)=>dayKey(effectiveTime(t))===key);
   const stats=computeStats(account,trades);
+  const markers=await getSessionMarkers(key);
+  const timeline=buildTimeline(trades,markers);
   const routine=await getRoutineDay(key);
   const routineState=routineProgress(routine.rules,routine.checkedIds);
   const planSaved=Boolean((routine.plan?.intention??"").trim()||(routine.plan?.marketBias??"").trim()||(routine.plan?.watchlist??"").trim());
@@ -41,9 +46,9 @@ export default async function CalendarPage({searchParams}:{searchParams:Promise<
   const dateTitle=new Intl.DateTimeFormat("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"}).format(selected);
 
   return <>
-    <PageTitle title="Calendar" subtitle="Journal your sessions, one day at a time."/>
+    <PageTitle title="Calendar" subtitle="Journal your sessions, one day at a time." action={<Link href="/yearly" className="btn-ghost"><Icon name="calendar" size={15}/>Year view</Link>}/>
     <div className="space-y-5">
-      {sp.saved && <p role="status" className="flex items-center gap-2 rounded-lg bg-up/7 px-4 py-3 text-xs text-up"><Icon name="checkCircle" size={15}/>Your session reflection is saved.</p>}
+      {sp.saved && <p role="status" className="flex items-center gap-2 rounded-lg bg-up/7 px-4 py-3 text-xs text-up"><Icon name="checkCircle" size={15}/>{sp.saved==="marker"?"Pinned to the session timeline.":"Your session reflection is saved."}</p>}
       <MonthCalendar month={month} days={full.days} currency={account.currency} entryDates={entries.map((e)=>e.entryDate)} monthBasePath="/day-view"/>
 
       <section className="card overflow-hidden">
@@ -75,6 +80,12 @@ export default async function CalendarPage({searchParams}:{searchParams:Promise<
       <section>
         <SectionTitle action={<Link href="/trades/new" className="text-link"><Icon name="plus" size={12}/>Add trade</Link>}>Trades in this session</SectionTitle>
         {trades.length?<TradesTable trades={trades} currency={account.currency} compact/>:<div className="card px-5 py-8 text-center"><Icon name="calendar" size={24} className="mx-auto mb-3 text-dim"/><p className="text-xs text-muted">No trades for this day. You can still capture a reflection below.</p></div>}
+      </section>
+
+      <section className="space-y-4">
+        <SectionTitle>Session replay</SectionTitle>
+        <SessionTimeline events={timeline} currency={account.currency}/>
+        <SessionMarkerForm accountId={account.id} markerDate={key} defaultTime={new Intl.DateTimeFormat("en-GB",{hour:"2-digit",minute:"2-digit",hour12:false}).format(selected)}/>
       </section>
 
       <section>

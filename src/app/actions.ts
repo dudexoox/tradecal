@@ -231,6 +231,39 @@ export async function deleteTrade(id: number) {
   redirect("/trades");
 }
 
+/* -------------------------------- quick log -------------------------------- */
+
+/**
+ * The fast path: symbol, side, result and risk. Everything else can be
+ * filled in later on the trade page.
+ */
+export async function quickLogTrade(_prev: FormState, fd: FormData): Promise<FormState> {
+  const userId = await requireUser();
+  const parsed = await parseTrade(fd);
+  if (!parsed.data) return { error: parsed.error };
+
+  const accountIdRaw = Number(str(fd, "accountId"));
+  const { account } = await getActiveAccount();
+  const chosenId = Number.isFinite(accountIdRaw) && accountIdRaw > 0 ? accountIdRaw : account?.id;
+  if (!chosenId) return { error: "Create an account before logging trades." };
+
+  const [owned] = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(and(eq(accounts.id, chosenId), eq(accounts.userId, userId)))
+    .limit(1);
+  if (!owned) return { error: "Account not found." };
+
+  const [created] = await db
+    .insert(trades)
+    .values({ ...parsed.data, accountId: owned.id, userId })
+    .returning({ id: trades.id });
+  await syncTradeTags(userId, created.id, parsed.tagNames ?? []);
+
+  revalidatePath("/", "layout");
+  redirect("/trades?logged=1");
+}
+
 /* --------------------------------- journal -------------------------------- */
 
 export async function saveJournalEntry(_prev: FormState, fd: FormData): Promise<FormState> {

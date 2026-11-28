@@ -4,18 +4,29 @@ import {
   dailyPlans,
   dailyRuleChecks,
   journalEntries,
+  performanceDigests,
+  sessionMarkers,
   strategies,
   tags,
   tradeTags,
+  tradeTemplates,
+  tradeViews,
   trades,
+  tradingGoals,
   tradingRules,
   type Account,
   type DailyPlan,
+  type DigestPeriod,
+  type PerformanceDigest,
   type PublicAccount,
+  type SessionMarker,
   type Tag,
   type Trade,
   type TradeTag,
+  type TradeTemplate,
+  type TradeView,
   type TradeWithTags,
+  type TradingGoal,
   type TradingRule,
 } from "@/db/schema";
 import { and, asc, desc, eq, gt, gte, ilike, inArray, lt, sql } from "drizzle-orm";
@@ -311,4 +322,92 @@ export async function getRoutineHistory(fromDate: string): Promise<Map<string, R
     map.set(plan.planDate, current);
   }
   return map;
+}
+
+/** The number of active routine rules — the denominator for rule completion. */
+export async function getActiveRuleCount(): Promise<number> {
+  const userId = await requireUser();
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(tradingRules)
+    .where(and(eq(tradingRules.userId, userId), eq(tradingRules.active, true)));
+  return row?.count ?? 0;
+}
+
+/* --------------------------- goals & risk limits --------------------------- */
+
+/** The goals row for one account. Ownership-checked. */
+export async function getGoals(accountId: number): Promise<TradingGoal | null> {
+  const userId = await requireUser();
+  const [row] = await db
+    .select()
+    .from(tradingGoals)
+    .where(and(eq(tradingGoals.userId, userId), eq(tradingGoals.accountId, accountId)))
+    .limit(1);
+  return row ?? null;
+}
+
+/* ----------------------------- session replay ------------------------------ */
+
+/** The notes pinned to one trading day. Ownership-checked. */
+export async function getSessionMarkers(markerDate: string): Promise<SessionMarker[]> {
+  const userId = await requireUser();
+  return db
+    .select()
+    .from(sessionMarkers)
+    .where(and(eq(sessionMarkers.userId, userId), eq(sessionMarkers.markerDate, markerDate)))
+    .orderBy(asc(sessionMarkers.at), asc(sessionMarkers.id));
+}
+
+/* -------------------------- performance digest ----------------------------- */
+
+/** Saved digests for one account and period type, newest first. Ownership-checked. */
+export async function getDigests(accountId: number, period: DigestPeriod): Promise<PerformanceDigest[]> {
+  const userId = await requireUser();
+  return db
+    .select()
+    .from(performanceDigests)
+    .where(
+      and(
+        eq(performanceDigests.userId, userId),
+        eq(performanceDigests.accountId, accountId),
+        eq(performanceDigests.period, period),
+      ),
+    )
+    .orderBy(desc(performanceDigests.periodStart));
+}
+
+/* ------------------------- saved views & columns --------------------------- */
+
+/** Every saved trade-log view for one account. Ownership-checked. */
+export async function getTradeViews(accountId: number): Promise<TradeView[]> {
+  const userId = await requireUser();
+  return db
+    .select()
+    .from(tradeViews)
+    .where(and(eq(tradeViews.userId, userId), eq(tradeViews.accountId, accountId)))
+    .orderBy(asc(tradeViews.name));
+}
+
+/* ---------------------------- setup templates ------------------------------ */
+
+/** Every setup template owned by the signed-in user. Ownership-checked. */
+export async function getTradeTemplates(): Promise<TradeTemplate[]> {
+  const userId = await requireUser();
+  return db
+    .select()
+    .from(tradeTemplates)
+    .where(eq(tradeTemplates.userId, userId))
+    .orderBy(asc(tradeTemplates.name));
+}
+
+/** One template by id. Ownership-checked. */
+export async function getTradeTemplateById(id: number): Promise<TradeTemplate | null> {
+  const userId = await requireUser();
+  const [row] = await db
+    .select()
+    .from(tradeTemplates)
+    .where(and(eq(tradeTemplates.id, id), eq(tradeTemplates.userId, userId)))
+    .limit(1);
+  return row ?? null;
 }

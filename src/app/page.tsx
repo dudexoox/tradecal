@@ -3,17 +3,19 @@ import { Suspense } from "react";
 import { MonthCalendar, parseMonth } from "@/components/calendar";
 import { DashboardMetrics } from "@/components/dashboard-metrics";
 import { DashboardRange } from "@/components/dashboard-range";
+import { GoalsWidget } from "@/components/goals-widget";
 import { DailyPnlChart, PnlChart } from "@/components/performance-charts";
 import { RoutineWidget } from "@/components/routine-widget";
 import { TradesTable } from "@/components/trades-table";
 import { Empty, MoodPill, PageTitle, Pnl, SectionTitle } from "@/components/ui";
 import { SymbolLogo } from "@/components/symbol-logo";
 import { Icon } from "@/components/icons";
-import { getActiveAccount, getJournalEntries, getRoutineDay, getRoutineHistory, getTrades, maybeAutoSync } from "@/lib/data";
+import { getActiveAccount, getGoals, getJournalEntries, getRoutineDay, getRoutineHistory, getTrades, maybeAutoSync } from "@/lib/data";
 import { dayKey, fmtDateShort } from "@/lib/format";
 import { computeStats } from "@/lib/stats";
 import { filterPeriod } from "@/lib/period";
 import { routineProgress, routineStreak } from "@/lib/routine";
+import { computeGoalStatus, goalWarnings, resolveGoals } from "@/lib/goals";
 
 export const dynamic = "force-dynamic";
 
@@ -26,11 +28,12 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const todayKey = dayKey(new Date());
   const routineFrom = new Date();
   routineFrom.setDate(routineFrom.getDate() - 365);
-  const [allTrades, entries, routine, routineHistory] = await Promise.all([
+  const [allTrades, entries, routine, routineHistory, goalRow] = await Promise.all([
     getTrades(account.id),
     getJournalEntries(),
     getRoutineDay(todayKey),
     getRoutineHistory(dayKey(routineFrom)),
+    getGoals(account.id),
   ]);
   const routineState = routineProgress(routine.rules, routine.checkedIds);
   const routineStreakCount = routineStreak(routineHistory, routineState.total);
@@ -48,6 +51,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const lastEntry = entries[0];
   const currency = account.currency;
   const reviewPct = stats.total ? Math.round(reviewed/stats.total*100) : 0;
+  const goals = resolveGoals(account, goalRow);
+  const goalStatuses = computeGoalStatus(account, goals, allTrades);
+  const goalWarningsList = goalWarnings(goalStatuses);
+  const dailyStatus = goalStatuses.find((status) => status.key === "dailyLoss");
   return <>
     <PageTitle title="Dashboard" subtitle={<span className="flex flex-wrap items-center gap-3">A clearer picture of your trading. A little better, every day.{account.mt5Enabled&&<span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] ${account.mt5Status==="error"?"border-down/25 bg-down/6 text-down":"border-line bg-panel-2 text-muted"}`}><span className={`h-1.5 w-1.5 rounded-full ${account.mt5Status==="error"?"bg-down":"bg-up"}`}/>{account.mt5Status==="error"?"MT5 sync needs attention":account.mt5Mode==="live"?"MT5 auto-tracked":"MT5 auto-tracked · demo mode"}</span>}</span>} action={<div className="flex items-center gap-2.5"><Suspense fallback={<div className="h-10 w-[150px]"/>}><DashboardRange/></Suspense><Link href="/trades/new" className="btn-primary"><Icon name="plus" size={16}/>Add trade</Link></div>}/>
     <div className="mb-5 flex items-center justify-between border-b border-line"><div className="flex gap-6"><span className="-mb-px border-b-2 border-brand pb-3 text-xs font-semibold text-brand">Overview</span><Link href="/day-view" className="pb-3 text-xs font-medium text-muted transition-colors hover:text-fg">Calendar</Link><Link href="/routine" className="pb-3 text-xs font-medium text-muted transition-colors hover:text-fg">Routine</Link></div><span className="pb-3 text-[10px] text-muted">{stats.total} trades<span className="mx-2 text-line-2">/</span>{currency}</span></div>
@@ -61,6 +68,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         <MonthCalendar month={parseMonth(m)} days={fullStats.days} currency={currency} entryDates={entries.map((e)=>e.entryDate)} period={period}/>
         <div className="space-y-5">
           <RoutineWidget done={routineState.done} total={routineState.total} pct={routineState.pct} streak={routineStreakCount} planSaved={planSaved} reviewSaved={reviewSaved}/>
+          <GoalsWidget currency={currency} netPnl={fullStats.netPnl} profitTarget={goals.profitTarget} dailyUsed={dailyStatus?.used ?? 0} dailyLimit={goals.dailyLossLimit} breaches={goalWarningsList.filter((warning) => warning.level === "breach").map((warning) => warning.title)}/>
           <section className="overflow-hidden rounded-xl border border-[#deebfc] bg-[#eef6ff] p-5">
             <div className="mb-4 flex items-center justify-between"><span className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-white text-brand shadow-[0_2px_4px_#0781fe08]"><Icon name="pen" size={18}/></span><span className="rounded-full border border-brand/15 px-2 py-0.5 text-[9px] font-medium text-brand">A moment for you</span></div>
             <h2 className="text-[17px] font-semibold tracking-[-0.5px]">The edge is in the review.</h2><p className="mt-2 text-xs leading-relaxed text-[#7891ac]">Go beyond the numbers. What worked, what didn’t, and what will you take into tomorrow?</p><Link href="/journal?new=1" className="mt-4 flex h-9 items-center justify-center gap-2 rounded-lg border border-brand/15 bg-white text-xs font-medium text-brand transition-colors hover:bg-brand hover:text-white"><Icon name="notebook" size={14}/>Write a reflection<Icon name="arrow" size={13}/></Link>

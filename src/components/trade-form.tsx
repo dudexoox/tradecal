@@ -4,6 +4,7 @@ import { useActionState, useId, useRef, useState } from "react";
 import Link from "next/link";
 import type { Trade, TradeTag } from "@/db/schema";
 import type { FormState } from "@/app/actions";
+import { saveTradeAsTemplate } from "@/app/template-actions";
 import { fmtR } from "@/lib/format";
 import { Icon } from "./icons";
 import { CriteriaChecklist } from "./criteria-checklist";
@@ -15,22 +16,45 @@ const MAX_BYTES = 5 * 1024 * 1024;
 
 export type StrategyOption = { id: number; name: string; criteria: string[] };
 
-export function TradeForm({action,trade,accountId,setups,symbols,strategies,allTags,cancelHref,submitLabel,defaultTime="",openTime,closeTime}:{action:(prev:FormState,fd:FormData)=>Promise<FormState>;trade?:Trade&{tags?:TradeTag[]};accountId:number;setups:string[];symbols:string[];strategies:StrategyOption[];allTags:TradeTag[];cancelHref:string;submitLabel:string;defaultTime?:string;openTime?:string;closeTime?:string;}) {
+/** Values pre-filled from a setup template. */
+export type TradeDefaults = {
+  symbol?: string;
+  direction?: "long" | "short";
+  entryPrice?: number | null;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
+  riskAmount?: number | null;
+  size?: number | null;
+  setup?: string | null;
+  notes?: string | null;
+  strategyId?: number | null;
+  tags?: string[];
+};
+
+/** The account guardrails shown next to a new trade. */
+export type TradeGuardrails = {
+  dailyLossLimit: number;
+  dailyLossUsed: number;
+  dailyLossState: "ok" | "warn" | "breach";
+  maxRiskPerTrade: number | null;
+};
+
+export function TradeForm({action,trade,accountId,setups,symbols,strategies,allTags,cancelHref,submitLabel,defaultTime="",openTime,closeTime,defaults,guardrails}:{action:(prev:FormState,fd:FormData)=>Promise<FormState>;trade?:Trade&{tags?:TradeTag[]};accountId:number;setups:string[];symbols:string[];strategies:StrategyOption[];allTags:TradeTag[];cancelHref:string;submitLabel:string;defaultTime?:string;openTime?:string;closeTime?:string;defaults?:TradeDefaults;guardrails?:TradeGuardrails;}) {
   const [state,formAction,pending]=useActionState(action,null);
-  const [direction,setDirection]=useState<"long"|"short">(trade?.direction??"long");
+  const [direction,setDirection]=useState<"long"|"short">(trade?.direction??defaults?.direction??"long");
   const [rating,setRating]=useState(trade?.rating??0);
-  const [strategyId,setStrategyId]=useState<string>(trade?.strategyId?String(trade.strategyId):"");
+  const [strategyId,setStrategyId]=useState<string>(trade?.strategyId?String(trade.strategyId):defaults?.strategyId?String(defaults.strategyId):"");
   const [chartMode,setChartMode]=useState<"upload"|"link">(trade?.tradingviewUrl&&!trade?.chartImageUrl?"link":"upload");
   const [chartPreview,setChartPreview]=useState<string|null>(trade?.chartImageUrl??null);
   const [setupPreview,setSetupPreview]=useState<string|null>(trade?.setupImageUrl??null);
   const [chartRemoved,setChartRemoved]=useState(false);
   const [setupRemoved,setSetupRemoved]=useState(false);
   const [mediaError,setMediaError]=useState<string|null>(null);
-  const [entry,setEntry]=useState(trade?.entryPrice!=null?String(trade.entryPrice):"");
-  const [stop,setStop]=useState(trade?.stopLoss!=null?String(trade.stopLoss):"");
-  const [target,setTarget]=useState(trade?.takeProfit!=null?String(trade.takeProfit):"");
+  const [entry,setEntry]=useState(trade?.entryPrice!=null?String(trade.entryPrice):defaults?.entryPrice!=null?String(defaults.entryPrice):"");
+  const [stop,setStop]=useState(trade?.stopLoss!=null?String(trade.stopLoss):defaults?.stopLoss!=null?String(defaults.stopLoss):"");
+  const [target,setTarget]=useState(trade?.takeProfit!=null?String(trade.takeProfit):defaults?.takeProfit!=null?String(defaults.takeProfit):"");
   const [exit,setExit]=useState(trade?.exitPrice!=null?String(trade.exitPrice):"");
-  const [risk,setRisk]=useState(trade?.riskAmount!=null?String(trade.riskAmount):"");
+  const [risk,setRisk]=useState(trade?.riskAmount!=null?String(trade.riskAmount):defaults?.riskAmount!=null?String(defaults.riskAmount):"");
   const [pnl,setPnl]=useState(trade?.pnl!=null?String(trade.pnl):"");
 
   const chosen=strategies.find((s)=>String(s.id)===strategyId);
@@ -44,6 +68,7 @@ export function TradeForm({action,trade,accountId,setups,symbols,strategies,allT
       : null;
   const stopWarning= pricesReady&&((direction==="long"&&stopN>=entryN)||(direction==="short"&&stopN<=entryN));
   const targetWarning= pricesReady&&target.trim()!==""&&Number.isFinite(targetN)&&((direction==="long"&&targetN<=entryN)||(direction==="short"&&targetN>=entryN));
+  const riskCapBreached=guardrails?.maxRiskPerTrade!=null&&risk.trim()!==""&&Number.isFinite(riskN)&&riskN>guardrails.maxRiskPerTrade;
 
   const pickImage=(file:File|undefined,set:(url:string)=>void)=>{
     if(!file)return;
@@ -57,7 +82,7 @@ export function TradeForm({action,trade,accountId,setups,symbols,strategies,allT
     <input type="hidden" name="accountId" value={accountId}/><input type="hidden" name="direction" value={direction}/><input type="hidden" name="rating" value={rating||""}/>
     <div className="flex items-center gap-2.5 border-b border-line px-6 py-4"><Icon name="list" size={17} className="text-brand"/><h2 className="text-sm font-semibold">Trade details</h2><span className="ml-auto hidden text-[10px] text-muted sm:inline">The numbers are just the beginning.</span></div>
     <div className="grid gap-5 p-6 sm:grid-cols-2">
-      <div><label className="label" htmlFor="symbol">Symbol <span className="text-brand">*</span></label><input id="symbol" name="symbol" list="symbols" required maxLength={20} defaultValue={trade?.symbol??""} placeholder="e.g. EURUSD" autoComplete="off" className="field uppercase placeholder:normal-case"/><datalist id="symbols">{symbols.map((s)=><option key={s} value={s}/>)}</datalist></div>
+      <div><label className="label" htmlFor="symbol">Symbol <span className="text-brand">*</span></label><input id="symbol" name="symbol" list="symbols" required maxLength={20} defaultValue={trade?.symbol??defaults?.symbol??""} placeholder="e.g. EURUSD" autoComplete="off" className="field uppercase placeholder:normal-case"/><datalist id="symbols">{symbols.map((s)=><option key={s} value={s}/>)}</datalist></div>
       <div><span className="label">Direction</span><div className="grid h-11 grid-cols-2 gap-1 rounded-lg border border-line-2 bg-panel-2/60 p-1">{(["long","short"] as const).map((d)=><button key={d} type="button" aria-pressed={direction===d} onClick={()=>setDirection(d)} className={`flex items-center justify-center gap-1.5 rounded-md text-xs font-medium capitalize transition-colors ${direction===d?d==="long"?"bg-white text-up shadow-sm":"bg-white text-down shadow-sm":"text-muted hover:text-fg"}`}><Icon name="arrowUp" size={13} className={d==="short"?"rotate-90":""}/>{d}</button>)}</div></div>
       <div><label className="label" htmlFor="openedAt">Open time <span className="text-[10px] text-dim">(UTC)</span></label><input id="openedAt" name="openedAt" type="datetime-local" required defaultValue={trade?openTime:defaultTime} className="field"/></div>
       <div><label className="label" htmlFor="closedAt">Close time <span className="text-[10px] text-dim">(UTC, optional)</span></label><input id="closedAt" name="closedAt" type="datetime-local" defaultValue={trade?closeTime:defaultTime} className="field"/></div>
@@ -82,6 +107,40 @@ export function TradeForm({action,trade,accountId,setups,symbols,strategies,allT
         {(stopWarning||targetWarning)&&<p className="mt-2 text-[10px] text-down">For a {direction} trade, the stop should sit {direction==="long"?"below":"above"} entry and the target {direction==="long"?"above":"below"} it. Double-check the prices.</p>}
         <p className="mt-2 text-[10px] leading-relaxed text-muted">Enter the final net result in your account currency. Planned risk is the amount you were willing to lose — it turns P&amp;L into R-multiples for your reports.</p>
       </div>
+      {guardrails && (guardrails.dailyLossState !== "ok" || riskCapBreached) && (
+        <div
+          className={`rounded-lg px-4 py-3 sm:col-span-2 ${
+            guardrails.dailyLossState === "breach" || riskCapBreached ? "bg-down/7" : "bg-[#fdf8ec]"
+          }`}
+        >
+          <p
+            className={`flex items-start gap-2 text-[11px] leading-relaxed ${
+              guardrails.dailyLossState === "breach" || riskCapBreached ? "text-down" : "text-[#b07d17]"
+            }`}
+          >
+            <Icon name="info" size={14} className="mt-px shrink-0" />
+            <span>
+              {guardrails.dailyLossState === "breach" && (
+                <>
+                  The daily loss limit is already reached — you are down {guardrails.dailyLossUsed.toFixed(2)} today
+                  against a {guardrails.dailyLossLimit.toFixed(2)} limit.{" "}
+                </>
+              )}
+              {guardrails.dailyLossState === "warn" && (
+                <>
+                  {Math.round((guardrails.dailyLossUsed / Math.max(guardrails.dailyLossLimit, 1)) * 100)}% of today&apos;s
+                  loss budget is used.{" "}
+                </>
+              )}
+              {riskCapBreached && (
+                <>
+                  The planned risk of {riskN.toFixed(2)} is above your {guardrails.maxRiskPerTrade?.toFixed(2)} cap per trade.
+                </>
+              )}
+            </span>
+          </p>
+        </div>
+      )}
     </div>
 
     {/* ------------------------------------------------ beyond the numbers */}
@@ -95,10 +154,10 @@ export function TradeForm({action,trade,accountId,setups,symbols,strategies,allT
           </select>
           {strategies.length===0&&<p className="mt-2 text-[10px] text-muted">Write a strategy first — <Link href="/playbook?new=strategy" className="text-brand-2 hover:underline">create one in the playbook</Link>.</p>}
         </div>
-        <div><label className="label" htmlFor="setup">Setup / strategy</label><input id="setup" name="setup" list="setups" defaultValue={trade?.setup??""} placeholder="e.g. Breakout, pullback..." autoComplete="off" className="field"/><datalist id="setups">{setups.map((s)=><option key={s} value={s}/>)}</datalist></div>
+        <div><label className="label" htmlFor="setup">Setup / strategy</label><input id="setup" name="setup" list="setups" defaultValue={trade?.setup??defaults?.setup??""} placeholder="e.g. Breakout, pullback..." autoComplete="off" className="field"/><datalist id="setups">{setups.map((s)=><option key={s} value={s}/>)}</datalist></div>
         <div><span className="label">How well did you execute?</span><div className="flex h-11 items-center gap-1.5">{[1,2,3,4,5].map((n)=><button key={n} type="button" aria-label={`${n} of 5`} aria-pressed={rating===n} onClick={()=>setRating(rating===n?0:n)} className={`h-9 w-9 rounded-lg border text-xs transition-colors ${n<=rating?"border-brand/30 bg-brand/7 text-brand":"border-line-2 bg-white text-dim hover:border-brand/30"}`}>{n}</button>)}</div></div>
-        <div><label className="label" htmlFor="notes">Trade review</label><textarea id="notes" name="notes" rows={5} defaultValue={trade?.notes??""} placeholder={"What was your thesis? Did you follow your plan?\nWhat went well, and what would you do differently?"} className="field h-auto resize-y py-3 text-[13px] leading-relaxed"/></div>
-        <div className="sm:col-span-2"><span className="label">Tags</span><TagPicker allTags={allTags} selected={trade?.tags?.map((tag)=>tag.name)??[]}/><p className="mt-2 text-[10px] leading-relaxed text-muted">Label mistakes, emotions, conditions or anything else you want to compare in reports. New tags are created when you save the trade.</p></div>
+        <div><label className="label" htmlFor="notes">Trade review</label><textarea id="notes" name="notes" rows={5} defaultValue={trade?.notes??defaults?.notes??""} placeholder={"What was your thesis? Did you follow your plan?\nWhat went well, and what would you do differently?"} className="field h-auto resize-y py-3 text-[13px] leading-relaxed"/></div>
+        <div className="sm:col-span-2"><span className="label">Tags</span><TagPicker allTags={allTags} selected={trade?.tags?.map((tag)=>tag.name)??defaults?.tags??[]}/><p className="mt-2 text-[10px] leading-relaxed text-muted">Label mistakes, emotions, conditions or anything else you want to compare in reports. New tags are created when you save the trade.</p></div>
       </div>
 
       {chosen&&chosen.criteria.length>0&&(
@@ -137,7 +196,10 @@ export function TradeForm({action,trade,accountId,setups,symbols,strategies,allT
     </div>
 
     {state?.error && <p role="alert" className="mx-6 mt-4 rounded-lg bg-down/8 px-3 py-2 text-xs text-down">{state.error}</p>}
-    <div className="flex items-center justify-end gap-2 border-t border-line px-6 py-4"><Link href={cancelHref} className="btn-ghost">Cancel</Link><button type="submit" disabled={pending} className="btn-primary"><Icon name="check" size={15}/>{pending?"Saving…":submitLabel}</button></div>
+    <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line px-6 py-4">
+      <button type="submit" formAction={saveTradeAsTemplate} className="btn-ghost mr-auto"><Icon name="sparkles" size={14}/>Save as template</button>
+      <Link href={cancelHref} className="btn-ghost">Cancel</Link><button type="submit" disabled={pending} className="btn-primary"><Icon name="check" size={15}/>{pending?"Saving…":submitLabel}</button>
+    </div>
   </form>;
 }
 
