@@ -32,6 +32,16 @@ const paths = {
   bookmark: <path d="M6.5 4h11v16l-5.5-4-5.5 4V4Z"/>,
   clock: <><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3 2"/></>,
   logout: <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></>,
+  play: <path d="M7.5 4.8 19 12 7.5 19.2V4.8Z"/>,
+  pause: <><path d="M9.5 5v14M14.5 5v14"/></>,
+  stepBack: <><path d="M15 6 9 12l6 6V6Z"/><path d="M6.5 5.5v13"/></>,
+  stepForward: <><path d="M9 6l6 6-6 6V6Z"/><path d="M17.5 5.5v13"/></>,
+  skipStart: <><path d="M18 6 9 12l9 6V6Z"/><path d="M6 5.5v13"/></>,
+  skipEnd: <><path d="M6 6l9 6-9 6V6Z"/><path d="M18 5.5v13"/></>,
+  sun: <><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.2 5.2l1.4 1.4M17.4 17.4l1.4 1.4M18.8 5.2l-1.4 1.4M6.6 17.4l-1.4 1.4"/></>,
+  moon: <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/>,
+  fit: <><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></>,
+  eye: <><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.8"/></>,
 } as const;
 
 export type IconName = keyof typeof paths;

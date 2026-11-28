@@ -8,6 +8,7 @@ import {
   numeric,
   pgTable,
   primaryKey,
+  real,
   serial,
   text,
   timestamp,
@@ -152,10 +153,18 @@ export type TvChartType = (typeof TV_CHART_TYPES)[number];
 export const TV_TIMEZONES = ["Etc/UTC", "exchange"] as const;
 export type TvTimezone = (typeof TV_TIMEZONES)[number];
 
+/** Chart styles of the replay workspace (broker candles). */
+export const CHART_STYLES = ["candles", "line", "area"] as const;
+export type ChartStyle = (typeof CHART_STYLES)[number];
+export const CHART_THEMES = ["light", "dark"] as const;
+export type ChartTheme = (typeof CHART_THEMES)[number];
+export const CHART_REPLAY_SPEEDS = [0.5, 1, 2, 4] as const;
+export type ChartReplaySpeed = (typeof CHART_REPLAY_SPEEDS)[number];
+
 /**
- * One chart setup per signed-in user, shared by every trade. TradingView's
- * hosted widget owns drawings and indicator internals; these are the wrapper
- * settings we can read back and restore.
+ * One chart setup per signed-in user, shared by every trade. The TradingView
+ * columns drive the hosted widget (drawings, indicators and its own settings);
+ * the workspace columns drive the replay chart drawn from the broker candles.
  */
 export const chartPreferences = pgTable("chart_preferences", {
   userId: uuid("user_id").primaryKey(),
@@ -164,6 +173,14 @@ export const chartPreferences = pgTable("chart_preferences", {
   chartType: text("chart_type").$type<TvChartType>().notNull().default("candles"),
   timezone: text("timezone").$type<TvTimezone>().notNull().default("Etc/UTC"),
   showDrawingToolbar: boolean("show_drawing_toolbar").notNull().default(true),
+  /** Replay workspace: candle timeframe, look and playback. */
+  timeframe: text("timeframe").$type<ChartTimeframe>().notNull().default("M15"),
+  chartStyle: text("chart_style").$type<ChartStyle>().notNull().default("candles"),
+  chartTheme: text("chart_theme").$type<ChartTheme>().notNull().default("light"),
+  showZones: boolean("show_zones").notNull().default(true),
+  showRunningPnl: boolean("show_running_pnl").notNull().default(true),
+  showHigherTimeframe: boolean("show_higher_timeframe").notNull().default(false),
+  replaySpeed: real("replay_speed").notNull().default(1),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

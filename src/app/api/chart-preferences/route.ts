@@ -1,6 +1,10 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  CHART_REPLAY_SPEEDS,
+  CHART_STYLES,
+  CHART_THEMES,
+  CHART_TIMEFRAMES,
   TV_CHART_TYPES,
   TV_INTERVALS,
   TV_THEMES,
@@ -17,6 +21,13 @@ const DEFAULTS = {
   chartType: "candles" as const,
   timezone: "Etc/UTC" as const,
   showDrawingToolbar: true,
+  timeframe: "M15" as const,
+  chartStyle: "candles" as const,
+  chartTheme: "light" as const,
+  showZones: true,
+  showRunningPnl: true,
+  showHigherTimeframe: false,
+  replaySpeed: 1,
 };
 
 type PreferencesInput = Partial<typeof DEFAULTS>;
@@ -46,10 +57,41 @@ function parseInput(value: unknown): PreferencesInput | null {
     if (typeof raw.showDrawingToolbar !== "boolean") return null;
     out.showDrawingToolbar = raw.showDrawingToolbar;
   }
+
+  /* replay workspace (broker candles) */
+  if (raw.timeframe !== undefined) {
+    if (!CHART_TIMEFRAMES.includes(raw.timeframe as (typeof CHART_TIMEFRAMES)[number])) return null;
+    out.timeframe = raw.timeframe as (typeof DEFAULTS)["timeframe"];
+  }
+  if (raw.chartStyle !== undefined) {
+    if (!CHART_STYLES.includes(raw.chartStyle as (typeof CHART_STYLES)[number])) return null;
+    out.chartStyle = raw.chartStyle as (typeof DEFAULTS)["chartStyle"];
+  }
+  if (raw.chartTheme !== undefined) {
+    if (!CHART_THEMES.includes(raw.chartTheme as (typeof CHART_THEMES)[number])) return null;
+    out.chartTheme = raw.chartTheme as (typeof DEFAULTS)["chartTheme"];
+  }
+  if (raw.showZones !== undefined) {
+    if (typeof raw.showZones !== "boolean") return null;
+    out.showZones = raw.showZones;
+  }
+  if (raw.showRunningPnl !== undefined) {
+    if (typeof raw.showRunningPnl !== "boolean") return null;
+    out.showRunningPnl = raw.showRunningPnl;
+  }
+  if (raw.showHigherTimeframe !== undefined) {
+    if (typeof raw.showHigherTimeframe !== "boolean") return null;
+    out.showHigherTimeframe = raw.showHigherTimeframe;
+  }
+  if (raw.replaySpeed !== undefined) {
+    if (typeof raw.replaySpeed !== "number") return null;
+    if (!CHART_REPLAY_SPEEDS.includes(raw.replaySpeed as (typeof CHART_REPLAY_SPEEDS)[number])) return null;
+    out.replaySpeed = raw.replaySpeed;
+  }
   return out;
 }
 
-/** The signed-in user's saved Analyze-chart setup; null means "not saved yet". */
+/** The signed-in user's saved chart setup; null means "not saved yet". */
 export async function GET() {
   const user = await getUser();
   if (!user) return Response.json({ error: "Sign in required" }, { status: 401 });
@@ -62,7 +104,7 @@ export async function GET() {
   return Response.json({ preferences: prefs ?? null });
 }
 
-/** Save the signed-in user's Analyze-chart setup. Never accepts a user id. */
+/** Save the signed-in user's chart setup. Never accepts a user id. */
 export async function PUT(request: Request) {
   const user = await getUser();
   if (!user) return Response.json({ error: "Sign in required" }, { status: 401 });
@@ -88,6 +130,14 @@ export async function PUT(request: Request) {
     chartType: patch.chartType ?? current?.chartType ?? DEFAULTS.chartType,
     timezone: patch.timezone ?? current?.timezone ?? DEFAULTS.timezone,
     showDrawingToolbar: patch.showDrawingToolbar ?? current?.showDrawingToolbar ?? DEFAULTS.showDrawingToolbar,
+    timeframe: patch.timeframe ?? current?.timeframe ?? DEFAULTS.timeframe,
+    chartStyle: patch.chartStyle ?? current?.chartStyle ?? DEFAULTS.chartStyle,
+    chartTheme: patch.chartTheme ?? current?.chartTheme ?? DEFAULTS.chartTheme,
+    showZones: patch.showZones ?? current?.showZones ?? DEFAULTS.showZones,
+    showRunningPnl: patch.showRunningPnl ?? current?.showRunningPnl ?? DEFAULTS.showRunningPnl,
+    showHigherTimeframe:
+      patch.showHigherTimeframe ?? current?.showHigherTimeframe ?? DEFAULTS.showHigherTimeframe,
+    replaySpeed: patch.replaySpeed ?? current?.replaySpeed ?? DEFAULTS.replaySpeed,
     updatedAt: new Date(),
   };
 
@@ -102,6 +152,13 @@ export async function PUT(request: Request) {
         chartType: values.chartType,
         timezone: values.timezone,
         showDrawingToolbar: values.showDrawingToolbar,
+        timeframe: values.timeframe,
+        chartStyle: values.chartStyle,
+        chartTheme: values.chartTheme,
+        showZones: values.showZones,
+        showRunningPnl: values.showRunningPnl,
+        showHigherTimeframe: values.showHigherTimeframe,
+        replaySpeed: values.replaySpeed,
         updatedAt: values.updatedAt,
       },
     })
